@@ -1,4 +1,4 @@
-const circleOrigin = 'https://new.circleftp.net:5000'
+export const circleWebOrigins = ['http://new.circleftp.net:5000', 'http://15.1.1.50:5000']
 const circleIps = new Set(['15.1.1.1', '15.1.1.4', '15.1.1.5', '15.1.1.50', '103.170.204.84'])
 const mediaTypes = new Map([
   ['mp4', 'video/mp4'], ['m4v', 'video/mp4'], ['mkv', 'video/x-matroska'],
@@ -72,22 +72,21 @@ export async function findCircleStream(item, read, validate = circleVideo) {
   return null
 }
 
-export async function hostedCircleStream(item, signal) {
-  // shortcut: hosted playback uses direct HTTPS, extend if Circle publishes another browser-readable origin.
+export async function browserCircleStream(item, signal, tabOrigin) {
+  if (!circleWebOrigins.includes(tabOrigin)) throw new Error('Open the Circle tab to play this title.')
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(4500)])
   let source
   try {
     source = await findCircleStream(item, async path => {
-      const response = await fetch(circleOrigin + path, { signal: requestSignal, credentials: 'omit', redirect: 'error' })
+      const response = await fetch(tabOrigin + path, { signal: requestSignal, credentials: 'omit', redirect: 'error' })
       if (response.status === 404 && !path.includes('?')) return null
       if (!response.ok) throw new Error('Circle request failed')
       return response.json()
     })
   } catch (error) {
     if (signal.aborted) throw error
-    throw new Error('Circle playback is unavailable from this browser.')
+    throw new Error('Could not reach Circle from this connection.')
   }
   if (!source) throw new Error('No matching Circle stream was found.')
-  if (source.protocol !== 'https:') throw new Error('This Circle video uses HTTP, which this page cannot open.')
   return source.href
 }
