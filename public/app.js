@@ -1,8 +1,10 @@
 import { browse, search, title, imdbId, kinds } from './catalogue.js'
-import { hostedCircleStream } from './playback.js'
+import { browserCircleStream, circleWebOrigins } from './playback.js'
 
 const main = document.querySelector('main')
-const hosted = location.protocol === 'https:'
+const circleTab = circleWebOrigins.includes(location.origin)
+const hosted = location.protocol === 'https:' || circleTab
+const webPlayerHelp = new URL('./web-play.html', import.meta.url).href
 const genres = ['', 'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
   'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller']
 let navigation
@@ -344,7 +346,7 @@ async function startPlayback(item, episode, signal, autoplay) {
   try {
     let source
     if (hosted) {
-      source = await hostedCircleStream(request, signal)
+      source = await browserCircleStream(request, signal, location.origin)
     } else {
       const response = await fetch('/api/play?' + new URLSearchParams(request), { signal })
       const data = await response.json()
@@ -359,7 +361,10 @@ async function startPlayback(item, episode, signal, autoplay) {
     bindPlayer(signal, autoplay)
   } catch (error) {
     if (signal.aborted) return
-    state.innerHTML = '<div><h2>Stream unavailable</h2><p>' + escape(error.message) + '</p>' + retryButton + '</div>'
+    const action = hosted && !circleTab
+      ? '<a class="button quiet" href="' + escape(webPlayerHelp + '#' + currentRoute) + '">Circle web player</a>'
+      : retryButton
+    state.innerHTML = '<div><h2>Stream unavailable</h2><p>' + escape(error.message) + '</p>' + action + '</div>'
   }
 }
 

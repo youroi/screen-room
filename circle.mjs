@@ -1,8 +1,6 @@
-import { circleVideo, findCircleStream } from './public/playback.js'
+import { circleVideo, findCircleStream, circleWebOrigins } from './public/playback.js'
 
-const circleOrigins = ['http://new.circleftp.net:5000', 'http://15.1.1.50:5000']
-
-export function createCircle({ origins = circleOrigins, doFetch = fetch } = {}) {
+export function createCircle({ origins = circleWebOrigins, doFetch = fetch } = {}) {
   let working = origins[0]
   const allowedOrigins = new Set(origins)
 

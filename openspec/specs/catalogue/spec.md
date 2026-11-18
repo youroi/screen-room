@@ -1,7 +1,7 @@
 # catalogue Specification
 
 ## Purpose
-TBD - created by archiving change independent-catalogue. Update Purpose after archive.
+Browse independent title metadata and play a matching video from Circle in the browser.
 
 ## Requirements
 
@@ -22,3 +22,8 @@ Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
 
 - **WHEN** Circle cannot be reached, the matching video is absent or the browser cannot open its URL
 - **THEN** the Watch page explains the playback issue and keeps navigation available
+
+#### Scenario: A visitor opens Screen Room in a Circle browser tab
+
+- **WHEN** the visitor runs the Screen Room bookmark on an approved Circle HTTP origin
+- **THEN** the browser loads the Screen Room UI and resolves playback from that Circle origin

@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { once } from 'node:events'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
-import { findCircleStream } from './public/playback.js'
+import { browserCircleStream, findCircleStream } from './public/playback.js'
 
 async function listen(server, context) {
   server.listen(0, '127.0.0.1')
@@ -87,4 +87,22 @@ test('Circle fails clearly when neither endpoint responds', async () => {
   })
   await assert.rejects(circle.resolve({ title: 'Harbour', kind: 'movie' }), { status: 502 })
   assert.deepEqual(tried, ['first.example', 'second.example'])
+})
+
+test('the Circle web player uses HTTP only inside an approved Circle tab', async t => {
+  const requests = []
+  const source = 'http://15.1.1.50:5000/north.mp4'
+  t.mock.method(globalThis, 'fetch', async url => {
+    requests.push(new URL(url).origin)
+    return String(url).includes('?')
+      ? Response.json({ posts: [{ id: 8, name: 'North Star', type: 'singleVideo' }] })
+      : Response.json({ content: source })
+  })
+  const item = { title: 'North Star', kind: 'movie' }
+  const { signal } = new AbortController()
+  assert.equal(await browserCircleStream(item, signal, 'http://15.1.1.50:5000'), source)
+  assert.deepEqual(requests, ['http://15.1.1.50:5000', 'http://15.1.1.50:5000'])
+  requests.length = 0
+  await assert.rejects(browserCircleStream(item, signal, 'http://unrelated.example'), /Open the Circle tab/)
+  assert.deepEqual(requests, [])
 })
