@@ -9,6 +9,26 @@ export function mediaType(url) {
   return mediaTypes.get(url.pathname.split('.').at(-1).toLowerCase())
 }
 
+export async function probeByteRange(source, signal) {
+  const controller = new AbortController()
+  try {
+    const response = await fetch(source, {
+      headers: { Range: 'bytes=1-1' }, cache: 'no-store', credentials: 'omit', redirect: 'error',
+      signal: AbortSignal.any([signal, controller.signal, AbortSignal.timeout(2000)])
+    })
+    const range = response.headers.get('content-range')
+    const type = response.headers.get('content-type') ?? ''
+    const status = response.status
+    const ignored = status === 200 && !/^(text\/html|application\/json)/i.test(type)
+    return { status, range, ignored }
+  } catch (error) {
+    return { error: error.name }
+  } finally {
+    // Stop after the headers even if the server started sending the entire file.
+    controller.abort()
+  }
+}
+
 export function circleVideo(value, allowedOrigins = new Set()) {
   if (typeof value !== 'string') return null
   let url

@@ -1,5 +1,5 @@
 import { browse, search, title, imdbId, kinds } from './catalogue.js'
-import { browserCircleStream, circleWebOrigins } from './playback.js'
+import { browserCircleStream, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=5'
 
 const main = document.querySelector('main')
 const circleTab = circleWebOrigins.includes(location.origin)
@@ -208,7 +208,7 @@ function watch(item, episode) {
   const next = episode ? allEpisodes[allEpisodes.indexOf(episode) + 1] : null
   return '<div class="watch-head">' + titleLink(item) + '<h1>' + escape(heading) + '</h1></div>' +
     '<div class="player" id="player">' +
-    '<video id="video" playsinline preload="auto"></video>' +
+    '<video id="video" playsinline preload="metadata"></video>' +
     '<div class="player-state" role="status"><span class="spinner" aria-hidden="true"></span>Finding stream…</div>' +
     '<div class="player-state seek-recovery" hidden><div><h2>Seek stalled</h2><p role="status"></p>' +
     '<div class="seek-actions"><button class="button primary" type="button" data-retry-seek>Retry seek</button>' +
@@ -221,6 +221,7 @@ function watch(item, episode) {
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
     '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
+    '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre></details>' +
     (next ? '<a class="button quiet next-episode" data-route href="' +
       escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
       '">Next episode' + icon('expand') + '</a>' : '')
@@ -240,6 +241,7 @@ function bindPlayer(signal, autoplay) {
   const recovery = main.querySelector('.seek-recovery')
   const resume = recovery.querySelector('[data-resume-seek]')
   const retry = recovery.querySelector('[data-retry-seek]')
+  const debug = main.querySelector('.playback-debug')
   const source = video.getAttribute('src')
   let bufferTimer
   let seekTimer
@@ -248,6 +250,8 @@ function bindPlayer(signal, autoplay) {
   let lastPlayed = 0
   let pendingSeek
   let stalledSeek
+  let rangeCheck
+  let rangeProbe
 
   function formatTime(value) {
     const seconds = Number.isFinite(value) ? Math.floor(value) : 0
@@ -267,6 +271,31 @@ function bindPlayer(signal, autoplay) {
     if (!scrubbing) seek.value = duration ? position / duration * 100 : 0
     const preview = scrubbing ? Number(seek.value) * duration / 100 : position
     time.textContent = formatTime(preview) + ' / ' + formatTime(duration)
+  }
+
+  function formatRanges(ranges) {
+    return Array.from({ length: ranges.length }, (_, index) =>
+      formatTime(ranges.start(index)) + '–' + formatTime(ranges.end(index))).join(', ') || 'empty'
+  }
+
+  function showDebug(attempt, reason) {
+    const url = new URL(source, location.href)
+    const probe = rangeProbe?.status ? 'HTTP ' + rangeProbe.status +
+      (rangeProbe.range ? ' (' + rangeProbe.range + ')' : '') : rangeProbe?.error ?? 'not run'
+    debug.querySelector('pre').textContent = [
+      main.querySelector('.watch-head h1').textContent,
+      'Seek ' + formatTime(attempt.from) + ' → ' + formatTime(attempt.target) + ' / ' + formatTime(duration),
+      'Result: ' + reason,
+      'Source: ' + url.origin + (mediaType(url) ? ' (' + mediaType(url) + ')' : ''),
+      'Range bytes=1-1: ' + probe,
+      'Buffered before: ' + attempt.buffered,
+      'Buffered after: ' + formatRanges(video.buffered),
+      'Seekable: ' + formatRanges(video.seekable),
+      'Current position: ' + formatTime(video.currentTime),
+      'Media state: ready ' + video.readyState + ', network ' + video.networkState +
+        (video.error ? ', error ' + video.error.code : '')
+    ].join('\n')
+    debug.hidden = false
   }
 
   function stopBuffering() {
@@ -293,7 +322,7 @@ function bindPlayer(signal, autoplay) {
 
   function failed() {
     if (signal.aborted || stalledSeek) return
-    if (pendingSeek) return retryOrStopSeek()
+    if (pendingSeek) return stopSeek('media error')
     stopBuffering()
     start.hidden = true
     error.textContent = 'This video could not play. The source may be unavailable or the format may be unsupported.'
@@ -311,6 +340,7 @@ function bindPlayer(signal, autoplay) {
     if (!attempt?.applied || video.seeking) return
     const needsPlayback = attempt.play && !video.ended && attempt.target < duration
     if (video.readyState < (needsPlayback ? 3 : 2)) return
+    if (needsPlayback && video.currentTime < attempt.target + 0.2) return
     clearTimeout(seekTimer)
     pendingSeek = undefined
     stopBuffering()
@@ -318,7 +348,7 @@ function bindPlayer(signal, autoplay) {
   }
 
   function applySeek() {
-    if (!pendingSeek || pendingSeek.applied || video.readyState < 1) return
+    if (!pendingSeek || pendingSeek.checkingRange || pendingSeek.applied || video.readyState < 1) return
     pendingSeek.applied = true
     pendingSeek.target = Math.min(pendingSeek.target, video.duration)
     video.currentTime = pendingSeek.target
@@ -329,31 +359,29 @@ function bindPlayer(signal, autoplay) {
   function startSeek(attempt, reopen = false) {
     clearTimeout(seekTimer)
     stalledSeek = undefined
-    pendingSeek = { ...attempt, applied: false }
+    pendingSeek = { ...attempt, applied: false, checkingRange: false }
     recovery.hidden = true
     error.hidden = true
     showBuffering()
-    seekTimer = setTimeout(retryOrStopSeek, 8000)
-    if (reopen) {
-      if (!video.getAttribute('src')) video.src = source
-      else video.load()
-    } else applySeek()
+    seekTimer = setTimeout(() => stopSeek('8-second timeout'), 8000)
+    if (reopen) video.src = source
+    else applySeek()
     syncPlayButton()
     updateTime()
   }
 
-  function retryOrStopSeek() {
+  function stopSeek(reason) {
     const attempt = pendingSeek
     if (!attempt || signal.aborted) return
-    if (!attempt.retried) return startSeek({ ...attempt, retried: true }, true)
     clearTimeout(seekTimer)
     stalledSeek = attempt
     pendingSeek = undefined
     stopBuffering()
+    showDebug(attempt, reason)
     video.pause()
     video.removeAttribute('src')
     video.load()
-    recovery.querySelector('p').textContent = 'Circle stopped loading at ' + formatTime(attempt.target) + '.'
+    recovery.querySelector('p').textContent = 'Could not reach ' + formatTime(attempt.target) + '. Loading stopped.'
     const fallback = Math.abs(attempt.target - attempt.from) < 1 ? 0 : attempt.from
     resume.textContent = fallback ? 'Resume at ' + formatTime(fallback) : 'Start over'
     resume.hidden = !fallback && attempt.target === 0
@@ -362,12 +390,39 @@ function bindPlayer(signal, autoplay) {
     updateTime()
   }
 
-  function seekTo(target) {
+  async function seekTo(target) {
     if (!duration || seek.disabled || !Number.isFinite(target)) return
-    startSeek({
-      target: Math.max(0, Math.min(duration, target)), from: pendingSeek?.from ?? lastPlayed,
-      play: pendingSeek?.play ?? !video.paused, retried: false
-    })
+    target = Math.max(0, Math.min(duration, target))
+    const attempt = {
+      target, from: pendingSeek?.from ?? lastPlayed, play: pendingSeek?.play ?? !video.paused,
+      buffered: formatRanges(video.buffered)
+    }
+    const buffered = video.buffered
+    const inBuffer = Array.from({ length: buffered.length }, (_, index) =>
+      target >= buffered.start(index) && target < buffered.end(index)).some(Boolean)
+    if (!inBuffer) {
+      if (!rangeProbe) {
+        clearTimeout(seekTimer)
+        attempt.checkingRange = true
+        pendingSeek = attempt
+        showBuffering()
+        updateTime()
+        rangeCheck ??= probeByteRange(source, signal)
+        rangeProbe = await rangeCheck
+        if (signal.aborted || pendingSeek !== attempt) return
+      }
+      if (rangeProbe.ignored) {
+        showDebug(attempt, 'server ignored the requested byte range')
+        pendingSeek = undefined
+        stopBuffering()
+        error.textContent = 'Circle sent a full-file response. Seek within the buffered part or keep watching.'
+        error.hidden = false
+        syncPlayButton()
+        updateTime()
+        return
+      }
+    }
+    startSeek(attempt)
   }
 
   function flipPlayback() {

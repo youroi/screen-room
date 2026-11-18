@@ -31,5 +31,10 @@ Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
 #### Scenario: Circle stalls during a seek
 
 - **WHEN** a seek remains incomplete for eight seconds
-- **THEN** the player reopens the same stream and retries the requested position once
-- **AND** if the retry stalls, it stops the spinner and offers to retry or resume from the last playable position
+- **THEN** the player cancels loading and offers to retry or resume from the last playable position
+- **AND** playback details show the requested position, the range response available to the browser and the buffered positions
+
+#### Scenario: Circle sends a full file for a byte-range request
+
+- **WHEN** the player checks an unbuffered seek and receives a full-file response to the byte-range probe
+- **THEN** the player cancels the probe, keeps the existing playback position and allows seeking within the buffered video
