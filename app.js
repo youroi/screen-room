@@ -1,5 +1,5 @@
 import { browse, search, title, imdbId, kinds } from './catalogue.js'
-import { browserCircleStream, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=5'
+import { browserCircleStream, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=6'
 
 const main = document.querySelector('main')
 const circleTab = circleWebOrigins.includes(location.origin)
@@ -221,6 +221,11 @@ function watch(item, episode) {
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
     '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
+    '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
+    'Your browser may not support this stream’s audio format.</p>' +
+    '<div class="playback-options" hidden><label hidden>Audio track <select id="audio-track"></select></label>' +
+    '<button class="button quiet" type="button" data-other-stream hidden>Try another stream</button></div>' +
+    '<p id="stream-status" class="muted" role="status" hidden></p>' +
     '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre></details>' +
     (next ? '<a class="button quiet next-episode" data-route href="' +
       escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
@@ -237,6 +242,8 @@ function bindPlayer(signal, autoplay) {
   const time = main.querySelector('#time')
   const mute = main.querySelector('#mute')
   const error = main.querySelector('#video-error')
+  const audioStatus = main.querySelector('#audio-status')
+  const audioTrack = main.querySelector('#audio-track')
   const buffering = main.querySelector('.buffering')
   const recovery = main.querySelector('.seek-recovery')
   const resume = recovery.querySelector('[data-resume-seek]')
@@ -292,6 +299,7 @@ function bindPlayer(signal, autoplay) {
       'Buffered after: ' + formatRanges(video.buffered),
       'Seekable: ' + formatRanges(video.seekable),
       'Current position: ' + formatTime(video.currentTime),
+      'Audio: ' + (video.muted ? 'muted' : 'on') + ', decoded bytes ' + (video.webkitAudioDecodedByteCount ?? 'unavailable'),
       'Media state: ready ' + video.readyState + ', network ' + video.networkState +
         (video.error ? ', error ' + video.error.code : '')
     ].join('\n')
@@ -456,6 +464,27 @@ function bindPlayer(signal, autoplay) {
       updateTime()
     }, { signal })
   }
+  video.addEventListener('timeupdate', () => {
+    const played = video.played
+    if (!played.length || video.muted || !video.webkitVideoDecodedByteCount) return
+    const span = played.end(played.length - 1) - played.start(played.length - 1)
+    audioStatus.hidden = video.webkitAudioDecodedByteCount !== 0 || span < 2
+  }, { signal })
+  if (video.audioTracks) {
+    function updateAudioTracks() {
+      const tracks = Array.from(video.audioTracks)
+      audioTrack.replaceChildren(...tracks.map((track, index) => new Option(
+        track.label || track.language || 'Track ' + (index + 1), index, false, track.enabled
+      )))
+      audioTrack.parentElement.hidden = tracks.length < 2
+      if (tracks.length > 1) audioTrack.closest('.playback-options').hidden = false
+    }
+    video.addEventListener('loadedmetadata', updateAudioTracks, { signal })
+    video.audioTracks.addEventListener('addtrack', updateAudioTracks, { signal })
+    audioTrack.addEventListener('change', () => {
+      Array.from(video.audioTracks).forEach((track, index) => { track.enabled = index === Number(audioTrack.value) })
+    }, { signal })
+  }
   video.addEventListener('waiting', () => {
     if (pendingSeek || (!video.paused && !stalledSeek)) showBuffering()
   }, { signal })
@@ -496,6 +525,7 @@ function bindPlayer(signal, autoplay) {
   start.addEventListener('click', flipPlayback)
   mute.addEventListener('click', () => { video.muted = !video.muted })
   video.addEventListener('volumechange', () => {
+    if (video.muted) audioStatus.hidden = true
     mute.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute')
     mute.innerHTML = icon(video.muted ? 'muted' : 'volume')
   })
@@ -516,9 +546,48 @@ function bindPlayer(signal, autoplay) {
 }
 
 async function startPlayback(item, episode, signal, autoplay) {
-  const request = { kind: item.kind, title: item.title, year: item.year }
+  const request = { kind: item.kind, id: item.id, title: item.title, year: item.year }
   if (episode) Object.assign(request, { season: episode.season, episode: episode.number })
-  const state = main.querySelector('.player-state')
+  const watchPage = main.querySelector('.route-enter')
+  const tried = new Set()
+  let activePlayer
+
+  function showPlayer(source, playNow) {
+    tried.add(source)
+    activePlayer = new AbortController()
+    watchPage.querySelector('.player-state').hidden = true
+    watchPage.querySelector('.controls').hidden = false
+    watchPage.querySelector('.player-start').hidden = false
+    if (circleTab) {
+      watchPage.querySelector('.playback-options').hidden = false
+      watchPage.querySelector('[data-other-stream]').hidden = false
+    }
+    watchPage.querySelector('video').src = source
+    bindPlayer(AbortSignal.any([signal, activePlayer.signal]), playNow)
+  }
+
+  watchPage.addEventListener('click', async event => {
+    const button = event.target.closest('[data-other-stream]')
+    if (!circleTab || !button || button.disabled) return
+    const status = watchPage.querySelector('#stream-status')
+    button.disabled = true
+    status.textContent = 'Finding another stream…'
+    status.hidden = false
+    try {
+      const source = await browserCircleStream(request, signal, location.origin, tried)
+      if (signal.aborted) return
+      activePlayer.abort()
+      watchPage.innerHTML = watch(item, episode)
+      showPlayer(source, true)
+      watchPage.querySelector('#toggle').focus({ preventScroll: true })
+    } catch (error) {
+      if (signal.aborted) return
+      button.disabled = false
+      status.textContent = error.message
+    }
+  }, { signal })
+
+  const state = watchPage.querySelector('.player-state')
   try {
     let source
     if (hosted) {
@@ -530,11 +599,7 @@ async function startPlayback(item, episode, signal, autoplay) {
       source = data.src
     }
     if (signal.aborted) return
-    state.hidden = true
-    main.querySelector('.controls').hidden = false
-    main.querySelector('.player-start').hidden = false
-    main.querySelector('video').src = source
-    bindPlayer(signal, autoplay)
+    showPlayer(source, autoplay)
   } catch (error) {
     if (signal.aborted) return
     const action = hosted && !circleTab
