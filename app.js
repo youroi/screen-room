@@ -1,18 +1,10 @@
-import { bridgeFetch, defaultBridge, pagesOrigin, parseBridge } from './connection.js'
+import { browse, search, title, imdbId, kinds } from './catalogue.js'
+import { hostedCircleStream } from './playback.js'
 
 const main = document.querySelector('main')
-const hosted = location.origin === pagesOrigin
-const storageKey = 'screen-room-bridge'
-let bridge = null
-if (hosted) {
-  try { bridge = parseBridge(localStorage.getItem(storageKey) ?? '') } catch {}
-}
-const categories = [
-  ['', 'All titles'], ['6', 'English movies'], ['2', 'Hindi movies'],
-  ['4', 'South Indian movies'], ['3', 'South Indian dubbed'], ['8', 'Foreign movies'],
-  ['1', 'Animation'], ['9', 'English & foreign series'], ['5', 'Hindi series'],
-  ['22', 'Dubbed series'], ['21', 'Anime'], ['85', 'Documentaries']
-]
+const hosted = location.protocol === 'https:'
+const genres = ['', 'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
+  'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller']
 let navigation
 const titleCache = new Map()
 const catalogueCache = new Map()
@@ -57,8 +49,8 @@ function routeTarget(path) {
   return hosted ? '#' + path : path
 }
 
-function resource(path) {
-  return hosted ? new URL(path, bridge).href : path
+function itemRoute(mode, item) {
+  return '/' + mode + '/' + item.kind + '/' + item.id
 }
 
 function routeLabel(title) {
@@ -69,29 +61,17 @@ function paint(html, signal) {
   if (!signal.aborted) main.innerHTML = html
 }
 
-async function getData(path, signal) {
-  let response
-  try {
-    response = hosted ? await bridgeFetch(bridge, path, signal) : await fetch(path, { signal })
-  } catch (error) {
-    if (hosted && !signal.aborted) throw new Error('Start the Screen Room helper and allow local network access in Chrome.')
-    throw error
-  }
-  const data = await response.json()
-  if (!response.ok) throw new Error(data.error ?? 'Try again in a moment.')
-  return data
-}
-
-function metadata(item) {
-  return [item.kind === 'series' ? 'Series' : 'Movie', item.year, item.duration, item.quality]
+function metadata(item, extended = false) {
+  const detail = extended ? [item.duration, ...item.genres] : []
+  return [item.kind === 'series' ? 'Series' : 'Movie', item.year, ...detail]
     .filter(Boolean).map(value => '<span>' + escape(value) + '</span>').join('')
 }
 
 function artwork(item, eager = false) {
   const fallback = '<span class="poster-fallback" aria-hidden="true">' + escape(item.title) + '</span>'
   return fallback + (item.artwork
-    ? '<img src="' + escape(resource('/art/' + item.artwork)) + '" alt="" ' +
-      (hosted ? 'crossorigin="anonymous" ' : '') + (eager ? '' : 'loading="lazy" ') + 'decoding="async">'
+    ? '<img src="' + escape(item.artwork) + '" alt="" referrerpolicy="no-referrer" ' +
+      (eager ? '' : 'loading="lazy" ') + 'decoding="async">'
     : '')
 }
 
@@ -99,10 +79,11 @@ main.addEventListener('error', event => {
   if (event.target instanceof HTMLImageElement) event.target.hidden = true
 }, true)
 
-function card(item, index) {
-  return '<li><a class="title-card" data-route href="' + escape(routeTarget('/title/' + item.id)) + '">' +
+function card(item, index, showKind) {
+  return '<li><a class="title-card" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
     '<div class="poster">' + artwork(item, index < 6) + '</div>' +
-    '<h2>' + escape(item.title) + '</h2><span class="meta">' + metadata(item) + '</span>' +
+    '<h2>' + escape(item.title) + '</h2><span class="meta">' +
+    (showKind ? metadata(item) : escape(item.year)) + '</span>' +
     '</a></li>'
 }
 
@@ -126,92 +107,81 @@ function message(title, detail, action = '') {
   return '<section class="message"><h2>' + escape(title) + '</h2><p>' + escape(detail) + '</p>' + action + '</section>'
 }
 
-function retryButtons() {
-  return '<div class="message-actions"><button class="button quiet" type="button" data-retry>Try again</button>' +
-    (hosted ? '<button class="button quiet" type="button" data-change-connection>Change connection</button>' : '') +
-    '</div>'
-}
+const retryButton = '<button class="button quiet" type="button" data-retry>Try again</button>'
 
-function connectionForm(signal) {
-  routeLabel('Connect')
-  paint('<section class="connection"><h1>Connect to Circle</h1>' +
-    '<p>Start the Screen Room helper on your BDIX network, then connect here.</p>' +
-    '<form class="bridge-form"><label for="bridge-address">Helper address</label>' +
-    '<div class="bridge-row"><input id="bridge-address" name="address" value="' +
-    escape(defaultBridge) + '" maxlength="140" spellcheck="false" required>' +
-    '<button class="button primary" type="submit">Connect</button></div>' +
-    '<p id="bridge-status" role="status"></p></form>' +
-    '<a class="help-link" href="https://github.com/youroi/screen-room#connect-the-hosted-app">Helper setup</a></section>', signal)
-}
-
-function rowsHeader(searching, query, chosen) {
+function rowsHeader(searching, query, kind, genre) {
   if (searching) {
     return '<div class="section-head"><h1>Search</h1></div>' +
       '<form class="search-form" action="/search" role="search">' + searchIcon +
       '<input name="q" type="search" aria-label="Search movies and series" maxlength="100" placeholder="Search movies and series" value="' +
       escape(query) + '"><button class="button primary" type="submit">Search</button></form>'
   }
-  return '<div class="section-head"><h1>Browse</h1><label class="category">' +
-    '<span class="sr-only">Category</span><select name="category">' +
-    categories.map(([value, name]) => '<option value="' + value + '"' +
-      (value === chosen ? ' selected' : '') + '>' + escape(name) + '</option>').join('') +
-    '</select></label></div>'
+  const filter = genre ? '&genre=' + encodeURIComponent(genre) : ''
+  const tabs = [['movie', 'Movies'], ['series', 'Series']].map(([value, name]) =>
+    '<a href="' + escape(routeTarget('/?kind=' + value + filter)) + '" data-route' +
+    (kind === value ? ' aria-current="page"' : '') + '>' + name + '</a>').join('')
+  return '<div class="section-head"><h1>Browse</h1><div class="browse-filters">' +
+    '<nav class="type-tabs" aria-label="Title type">' + tabs + '</nav><div class="category">' +
+    '<select name="genre" aria-label="Genre">' +
+    genres.map(value => '<option value="' + escape(value) + '"' +
+      (value === genre ? ' selected' : '') + '>' + escape(value || 'All genres') + '</option>').join('') +
+    '</select></div></div></div>'
 }
 
 async function list(url, signal) {
   const searching = url.pathname === '/search'
   const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100)
-  const chosen = categories.some(([id]) => id === url.searchParams.get('category')) ? url.searchParams.get('category') : ''
+  const kind = url.searchParams.get('kind') === 'series' ? 'series' : 'movie'
+  const genre = genres.includes(url.searchParams.get('genre')) ? url.searchParams.get('genre') : ''
   const page = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('page'), 10) || 1))
   routeLabel(searching ? 'Search' : 'Browse')
-  const heading = rowsHeader(searching, query, chosen)
+  const heading = rowsHeader(searching, query, kind, genre)
   if (searching && !query) {
     paint(heading, signal)
     return
   }
-  const params = new URLSearchParams({ page })
-  if (query) params.set('q', query)
-  if (!searching && chosen) params.set('category', chosen)
   const skeleton = '<p role="status" class="sr-only">Loading titles</p><ul class="grid skeleton" aria-hidden="true">' +
     '<li><div class="poster"></div></li>'.repeat(6) + '</ul>'
-  const endpoint = '/api/catalog?' + params
-  const cached = catalogueCache.get(endpoint)
+  const key = searching ? 'search:' + query : [kind, genre, page].join(':')
+  const cached = catalogueCache.get(key)
   const saved = cached?.expires > Date.now()
   paint(heading + '<div id="list-body">' + (saved ? '' : skeleton) + '</div>', signal)
   try {
-    const data = saved ? cached.data : await getData(endpoint, signal)
+    const data = saved ? cached.data : await (searching ? search(query, signal) : browse({ kind, genre, page, signal }))
     if (signal.aborted) return
     if (!saved) {
       if (catalogueCache.size >= 16) catalogueCache.delete(catalogueCache.keys().next().value)
-      catalogueCache.set(endpoint, { data, expires: Date.now() + 90_000 })
+      catalogueCache.set(key, { data, expires: Date.now() + 90_000 })
     }
     const listBody = main.querySelector('#list-body')
     listBody.innerHTML = data.items.length
-      ? '<ul class="grid">' + data.items.map(card).join('') + '</ul>' + pageLinks(url, page, data.hasNext)
-      : message('No titles found', searching ? 'Try another title.' : 'Choose another category or check the next page.') +
+      ? '<ul class="grid">' + data.items.map((item, index) => card(item, index, searching)).join('') + '</ul>' +
+        pageLinks(url, page, data.hasNext)
+      : message('No titles found', searching ? 'Try another title.' : 'Choose another genre or page.') +
         pageLinks(url, page, data.hasNext)
   } catch (error) {
     if (!signal.aborted) {
       main.querySelector('#list-body').innerHTML = message('Catalogue unavailable', error.message,
-        retryButtons())
+        retryButton)
     }
   }
 }
 
-function titleLink(id) {
-  return '<a class="return-link" data-route href="' + escape(routeTarget('/title/' + id)) + '">' + icon('back') + 'Title details</a>'
+function titleLink(item) {
+  return '<a class="return-link" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' + icon('back') + 'Title details</a>'
 }
 
 function episodes(item) {
   const first = item.seasons[0]?.episodes[0]
-  const button = item.playable || first
-    ? '<a class="button primary" data-route href="' + escape(routeTarget('/watch/' + item.id +
+  const button = item.kind === 'movie' || first
+    ? '<a class="button primary" data-route href="' + escape(routeTarget(itemRoute('watch', item) +
       (first ? '?episode=' + encodeURIComponent(first.key) : ''))) + '">' + playIcon + (first ? 'Play first episode' : 'Play') + '</a>'
     : '<p class="muted">Video unavailable.</p>'
   const seasons = item.seasons.map((season, index) => '<details class="season"' + (index === 0 ? ' open' : '') + '><summary>' +
     escape(season.name) + '</summary><ul>' + season.episodes.map(ep =>
-      '<li><a data-route href="' + escape(routeTarget('/watch/' + item.id + '?episode=' + encodeURIComponent(ep.key))) + '">' +
-      '<span>' + escape(ep.title) + '</span>' + playIcon + '</a></li>').join('') + '</ul></details>').join('')
+      '<li><a data-route href="' + escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(ep.key))) + '">' +
+      '<span><span class="episode-number">' + ep.number + '</span>' + escape(ep.title) + '</span>' + playIcon +
+      '</a></li>').join('') + '</ul></details>').join('')
   return { button, seasons }
 }
 
@@ -223,36 +193,31 @@ function details(item) {
     icon('back') + (returnTo.startsWith('/search') ? 'Search results' : 'Browse') + '</a>' +
     '<section class="title-layout"><div class="poster detail-poster">' + artwork(item, true) +
     '</div><div class="title-info"><h1>' + escape(item.title) +
-    '</h1><p class="meta">' + metadata(item) + '</p>' +
+    '</h1><p class="meta">' + metadata(item, true) + '</p>' +
     (item.description ? '<p class="synopsis">' + escape(item.description) + '</p>' : '') +
     button + '</div></section>' +
     (seasons ? '<section class="episode-list"><h2>Episodes</h2>' + seasons + '</section>' : '')
 }
 
-function watch(item, url) {
-  const selected = url.searchParams.get('episode')
+function watch(item, episode) {
   const allEpisodes = item.seasons.flatMap(season => season.episodes)
-  const episode = allEpisodes.find(ep => ep.key === selected)
-  if ((item.kind === 'series' && !episode) || (item.kind === 'movie' && !item.playable)) {
-    return titleLink(item.id) + message('Video unavailable', 'Choose a playable video from the title page.')
-  }
   const heading = episode ? episode.title : item.title
   routeLabel(heading)
   const next = episode ? allEpisodes[allEpisodes.indexOf(episode) + 1] : null
-  return '<div class="watch-head">' + titleLink(item.id) + '<h1>' + escape(heading) + '</h1></div>' +
+  return '<div class="watch-head">' + titleLink(item) + '<h1>' + escape(heading) + '</h1></div>' +
     '<div class="player" id="player">' +
-    '<video id="video" playsinline preload="auto" ' + (hosted ? 'crossorigin="anonymous" ' : '') +
-      'src="' + escape(resource('/video/' + item.id + '/' + (episode?.key ?? 'movie'))) + '"></video>' +
-    '<button class="player-start" type="button" aria-label="Play video">' + playIcon + '</button>' +
+    '<video id="video" playsinline preload="auto"></video>' +
+    '<div class="player-state" role="status"><span class="spinner" aria-hidden="true"></span>Finding stream…</div>' +
+    '<button class="player-start" type="button" aria-label="Play video" hidden>' + playIcon + '</button>' +
     '<div class="buffering" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="sr-only">Buffering</span></div>' +
-    '<div class="controls"><input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position" disabled>' +
+    '<div class="controls" hidden><input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position" disabled>' +
     '<div class="controls-bar"><button type="button" id="toggle" aria-label="Play">' + playIcon +
     '</button><span id="time" class="player-time">0:00 / 0:00</span><span class="spacer"></span>' +
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
     '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
     (next ? '<a class="button quiet next-episode" data-route href="' +
-      escape(routeTarget('/watch/' + item.id + '?episode=' + encodeURIComponent(next.key))) +
+      escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
       '">Next episode' + icon('expand') + '</a>' : '')
 }
 
@@ -369,6 +334,32 @@ function bindPlayer(signal, autoplay) {
   })
 }
 
+async function startPlayback(item, episode, signal, autoplay) {
+  const request = { kind: item.kind, title: item.title, year: item.year }
+  if (episode) Object.assign(request, { season: episode.season, episode: episode.number })
+  const state = main.querySelector('.player-state')
+  try {
+    let source
+    if (hosted) {
+      source = await hostedCircleStream(request, signal)
+    } else {
+      const response = await fetch('/api/play?' + new URLSearchParams(request), { signal })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error)
+      source = data.src
+    }
+    if (signal.aborted) return
+    state.hidden = true
+    main.querySelector('.controls').hidden = false
+    main.querySelector('.player-start').hidden = false
+    main.querySelector('video').src = source
+    bindPlayer(signal, autoplay)
+  } catch (error) {
+    if (signal.aborted) return
+    state.innerHTML = '<div><h2>Stream unavailable</h2><p>' + escape(error.message) + '</p>' + retryButton + '</div>'
+  }
+}
+
 async function render(focus = false, autoplay = false) {
   navigation?.abort()
   navigation = new AbortController()
@@ -384,25 +375,33 @@ async function render(focus = false, autoplay = false) {
     main.focus({ preventScroll: true })
   }
 
-  if (hosted && !bridge) return connectionForm(signal)
   if (url.pathname === '/' || url.pathname === '/search') return list(url, signal)
 
-  const [, mode, id] = url.pathname.split('/')
-  if (!['title', 'watch'].includes(mode) || !/^\d{1,12}$/.test(id ?? '')) {
+  const [, mode, kind, id] = url.pathname.split('/')
+  if (!['title', 'watch'].includes(mode) || !kinds.has(kind) || !imdbId.test(id ?? '')) {
     return paint(message('Page not found', 'Open Browse or Search to find a title.'), signal)
   }
   paint('<p class="route-loading" role="status">Loading title…</p>', signal)
   try {
-    const cached = titleCache.get(id)
-    const item = cached?.expires > Date.now() ? cached.item : await getData('/api/titles/' + id, signal)
+    const key = kind + ':' + id
+    const cached = titleCache.get(key)
+    const item = cached?.expires > Date.now() ? cached.item : await title(kind, id, signal)
     if (signal.aborted) return
-    if (titleCache.size >= 36) titleCache.delete(titleCache.keys().next().value)
-    if (item !== cached?.item) titleCache.set(id, { item, expires: Date.now() + 300_000 })
-    paint('<div class="route-enter">' + (mode === 'watch' ? watch(item, url) : details(item)) + '</div>', signal)
-    if (mode === 'watch') bindPlayer(signal, autoplay)
+    if (item !== cached?.item) {
+      if (titleCache.size >= 36) titleCache.delete(titleCache.keys().next().value)
+      titleCache.set(key, { item, expires: Date.now() + 300_000 })
+    }
+    if (mode === 'title') return paint('<div class="route-enter">' + details(item) + '</div>', signal)
+
+    const selected = url.searchParams.get('episode')
+    const episode = item.seasons.flatMap(season => season.episodes).find(candidate => candidate.key === selected)
+    if (kind === 'series' && !episode) {
+      return paint(titleLink(item) + message('Choose an episode', 'Open the title page to select an episode.'), signal)
+    }
+    paint('<div class="route-enter">' + watch(item, episode) + '</div>', signal)
+    await startPlayback(item, episode, signal, autoplay)
   } catch (error) {
-    if (!signal.aborted) paint(message('Title unavailable', error.message,
-      retryButtons()), signal)
+    if (!signal.aborted) paint(message('Title unavailable', error.message, retryButton), signal)
   }
 }
 
@@ -418,13 +417,6 @@ function go(href) {
 
 document.addEventListener('click', event => {
   if (event.target.closest('[data-retry]')) return void render()
-  if (event.target.closest('[data-change-connection]')) {
-    bridge = null
-    catalogueCache.clear()
-    titleCache.clear()
-    try { localStorage.removeItem(storageKey) } catch {}
-    return void render()
-  }
   const link = event.target.closest('a[data-route]')
   if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
@@ -436,45 +428,19 @@ document.addEventListener('click', event => {
   })
 })
 main.addEventListener('submit', event => {
-  if (event.target.matches('.bridge-form')) {
-    event.preventDefault()
-    void connect(event.target)
-    return
-  }
   if (!event.target.matches('.search-form')) return
   event.preventDefault()
   const query = new FormData(event.target).get('q').trim()
   go('/search' + (query ? '?' + new URLSearchParams({ q: query }) : ''))
 })
 
-async function connect(form) {
-  const status = form.querySelector('#bridge-status')
-  const button = form.querySelector('button')
-  if (button.disabled) return
-  const address = parseBridge(new FormData(form).get('address'))
-  if (!address) {
-    status.textContent = 'Enter localhost or the helper’s Wi-Fi IP address.'
-    return
-  }
-
-  status.textContent = 'Connecting…'
-  button.disabled = true
-  try {
-    const signal = navigation.signal
-    const response = await bridgeFetch(address, '/api/ready', AbortSignal.any([signal, AbortSignal.timeout(20_000)]))
-    if (!response.ok || (await response.json()).app !== 'Screen Room') throw new Error('Helper unavailable')
-    if (signal.aborted) return
-    bridge = address
-    try { localStorage.setItem(storageKey, address.origin) } catch {}
-    await render(true)
-  } catch {
-    status.textContent = 'Could not connect. Start the helper, verify its address, then allow local network access.'
-    button.disabled = false
-  }
-}
 main.addEventListener('change', event => {
-  if (!event.target.matches('select[name="category"]')) return
-  go('/' + (event.target.value ? '?category=' + event.target.value : ''))
+  if (!event.target.matches('select[name="genre"]')) return
+  const params = new URL(currentRoute, location.origin).searchParams
+  if (event.target.value) params.set('genre', event.target.value)
+  else params.delete('genre')
+  params.delete('page')
+  go('/' + (params.size ? '?' + params : ''))
 })
 window.addEventListener('popstate', () => {
   scrollPositions.set(currentRoute, window.scrollY)
