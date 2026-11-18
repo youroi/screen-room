@@ -226,7 +226,9 @@ function watch(item, episode) {
     '<div class="playback-options" hidden><label hidden>Audio track <select id="audio-track"></select></label>' +
     '<button class="button quiet" type="button" data-other-stream hidden>Try another stream</button></div>' +
     '<p id="stream-status" class="muted" role="status" hidden></p>' +
-    '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre></details>' +
+    '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre>' +
+    '<button class="button quiet" type="button" data-test-sound>Play test tone</button>' +
+    '<p role="status" data-sound-result></p></details>' +
     (next ? '<a class="button quiet next-episode" data-route href="' +
       escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
       '">Next episode' + icon('expand') + '</a>' : '')
@@ -249,6 +251,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const resume = recovery.querySelector('[data-resume-seek]')
   const retry = recovery.querySelector('[data-retry-seek]')
   const debug = main.querySelector('.playback-debug')
+  const testSound = debug.querySelector('[data-test-sound]')
+  const soundResult = debug.querySelector('[data-sound-result]')
   const source = video.getAttribute('src')
   let bufferTimer
   let seekTimer
@@ -260,6 +264,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   let rangeCheck
   let rangeProbe
   let audioReported = false
+  let seekDetails = []
 
   function formatTime(value) {
     const seconds = Number.isFinite(value) ? Math.floor(value) : 0
@@ -286,26 +291,79 @@ function bindPlayer(signal, autoplay, reportAudio) {
       formatTime(ranges.start(index)) + '–' + formatTime(ranges.end(index))).join(', ') || 'empty'
   }
 
-  function showDebug(attempt, reason) {
+  function renderDebug() {
     const url = new URL(source, location.href)
-    const probe = rangeProbe?.status ? 'HTTP ' + rangeProbe.status +
-      (rangeProbe.range ? ' (' + rangeProbe.range + ')' : '') : rangeProbe?.error ?? 'not run'
+    const tracks = video.audioTracks
     debug.querySelector('pre').textContent = [
       main.querySelector('.watch-head h1').textContent,
-      'Seek ' + formatTime(attempt.from) + ' → ' + formatTime(attempt.target) + ' / ' + formatTime(duration),
-      'Result: ' + reason,
       'Source: ' + url.origin + (mediaType(url) ? ' (' + mediaType(url) + ')' : ''),
+      'Current position: ' + formatTime(video.currentTime) + ' / ' + formatTime(duration),
+      'Audio: ' + (video.muted ? 'muted' : 'unmuted') + ', volume ' + Math.round(video.volume * 100) + '%',
+      'Decoded bytes: audio ' + (video.webkitAudioDecodedByteCount ?? 'unavailable') +
+        ', video ' + (video.webkitVideoDecodedByteCount ?? 'unavailable'),
+      'Audio tracks: ' + (tracks ? Array.from(tracks).filter(track => track.enabled).length +
+        ' enabled / ' + tracks.length : 'unavailable'),
+      'Media state: ready ' + video.readyState + ', network ' + video.networkState +
+        (video.error ? ', error ' + video.error.code : ''),
+      ...seekDetails
+    ].join('\n')
+  }
+
+  function showDebug(attempt, reason) {
+    const probe = rangeProbe?.status ? 'HTTP ' + rangeProbe.status +
+      (rangeProbe.range ? ' (' + rangeProbe.range + ')' : '') : rangeProbe?.error ?? 'not run'
+    seekDetails = [
+      'Seek ' + formatTime(attempt.from) + ' → ' + formatTime(attempt.target),
+      'Result: ' + reason,
       'Range bytes=1-1: ' + probe,
       'Buffered before: ' + attempt.buffered,
       'Buffered after: ' + formatRanges(video.buffered),
-      'Seekable: ' + formatRanges(video.seekable),
-      'Current position: ' + formatTime(video.currentTime),
-      'Audio: ' + (video.muted ? 'muted' : 'on') + ', decoded bytes ' + (video.webkitAudioDecodedByteCount ?? 'unavailable'),
-      'Media state: ready ' + video.readyState + ', network ' + video.networkState +
-        (video.error ? ', error ' + video.error.code : '')
-    ].join('\n')
-    debug.hidden = false
+      'Seekable: ' + formatRanges(video.seekable)
+    ]
+    renderDebug()
   }
+
+  debug.hidden = false
+  debug.addEventListener('toggle', () => { if (debug.open) renderDebug() }, { signal })
+  testSound.addEventListener('click', async () => {
+    let context
+    const stop = () => { void context?.close().catch(() => {}) }
+    testSound.disabled = true
+    soundResult.textContent = ''
+    renderDebug()
+    try {
+      const Audio = window.AudioContext ?? window.webkitAudioContext
+      context = new Audio()
+      signal.addEventListener('abort', stop, { once: true })
+      await context.resume()
+      if (signal.aborted) return
+      const tone = context.createOscillator()
+      const gain = context.createGain()
+      const now = context.currentTime
+      tone.frequency.value = 440
+      gain.gain.setValueAtTime(0, now)
+      gain.gain.linearRampToValueAtTime(0.05, now + 0.04)
+      gain.gain.linearRampToValueAtTime(0, now + 0.4)
+      tone.connect(gain).connect(context.destination)
+      await new Promise(resolve => {
+        function finish() {
+          signal.removeEventListener('abort', finish)
+          resolve()
+        }
+        tone.addEventListener('ended', finish, { once: true })
+        signal.addEventListener('abort', finish, { once: true })
+        tone.start(now)
+        tone.stop(now + 0.4)
+      })
+      if (!signal.aborted) soundResult.textContent = 'Test tone finished.'
+    } catch {
+      soundResult.textContent = 'The browser could not play the test tone.'
+    } finally {
+      signal.removeEventListener('abort', stop)
+      if (context && context.state !== 'closed') await context.close().catch(() => {})
+      testSound.disabled = false
+    }
+  }, { signal })
 
   function stopBuffering() {
     clearTimeout(bufferTimer)
@@ -537,12 +595,19 @@ function bindPlayer(signal, autoplay, reportAudio) {
   video.addEventListener('click', flipPlayback)
   toggle.addEventListener('click', flipPlayback)
   start.addEventListener('click', flipPlayback)
-  mute.addEventListener('click', () => { video.muted = !video.muted })
+  function toggleSound() {
+    const muted = video.muted || video.volume === 0
+    video.muted = !muted
+    if (muted && video.volume === 0) video.volume = 1
+  }
+  mute.addEventListener('click', toggleSound)
   video.addEventListener('volumechange', () => {
-    if (video.muted) audioStatus.hidden = true
-    mute.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute')
-    mute.innerHTML = icon(video.muted ? 'muted' : 'volume')
-  })
+    const muted = video.muted || video.volume === 0
+    if (muted) audioStatus.hidden = true
+    mute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
+    mute.innerHTML = icon(muted ? 'muted' : 'volume')
+    if (debug.open) renderDebug()
+  }, { signal })
   main.querySelector('#fullscreen').addEventListener('click', toggleFullscreen)
   document.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey ||
@@ -553,7 +618,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
       seekTo((pendingSeek?.target ?? video.currentTime) + (event.key === 'ArrowRight' ? 10 : -10))
-    } else if (event.key.toLowerCase() === 'm') video.muted = !video.muted
+    } else if (event.key.toLowerCase() === 'm' && !event.repeat) toggleSound()
     else if (event.key.toLowerCase() === 'f') toggleFullscreen()
   }, { signal })
   if (autoplay) play()
