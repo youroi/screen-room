@@ -27,3 +27,9 @@ Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
 
 - **WHEN** the visitor runs the Screen Room bookmark on an approved Circle HTTP origin
 - **THEN** the browser loads the Screen Room UI and resolves playback from that Circle origin
+
+#### Scenario: Circle stalls during a seek
+
+- **WHEN** a seek remains incomplete for eight seconds
+- **THEN** the player reopens the same stream and retries the requested position once
+- **AND** if the retry stalls, it stops the spinner and offers to retry or resume from the last playable position

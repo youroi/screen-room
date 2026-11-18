@@ -135,6 +135,8 @@ h1 { font-size: 3.15rem; font-weight: 730; line-height: 1.04; }
 .player-state h2 { color: var(--ink); font-size: 1.25rem; }
 .player-state p { margin: 5px auto 12px; }
 .player-state .spinner { width: 23px; height: 23px; border-width: 2px; }
+.seek-recovery { z-index: 1; background: #08070be8; }
+.seek-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .player-start { position: absolute; display: grid; place-items: center; width: 64px; height: 64px; left: 50%; top: calc(50% - 27px); transform: translate(-50%, -50%); border: 0; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
 .player-start:hover { background: #f6d9aa; }
 .player-start .play-icon { margin-left: 4px; width: 14px; height: 18px; }
@@ -150,6 +152,7 @@ h1 { font-size: 3.15rem; font-weight: 730; line-height: 1.04; }
 .controls-bar { display: flex; align-items: center; gap: 8px; }
 .controls-bar button { display: grid; place-items: center; min-width: 42px; min-height: 38px; padding: 0; border: 0; border-radius: 7px; background: transparent; }
 .controls-bar button:hover { background: #322840; color: var(--accent); }
+.controls-bar button:disabled { opacity: .55; }
 .spacer { flex: 1; }
 .player-time { color: var(--muted); font-size: .81rem; font-variant-numeric: tabular-nums; }
 #video-error, .next-episode { margin-top: 14px; }

@@ -210,6 +210,9 @@ function watch(item, episode) {
     '<div class="player" id="player">' +
     '<video id="video" playsinline preload="auto"></video>' +
     '<div class="player-state" role="status"><span class="spinner" aria-hidden="true"></span>Finding stream…</div>' +
+    '<div class="player-state seek-recovery" hidden><div><h2>Seek stalled</h2><p role="status"></p>' +
+    '<div class="seek-actions"><button class="button primary" type="button" data-retry-seek>Retry seek</button>' +
+    '<button class="button quiet" type="button" data-resume-seek>Resume playback</button></div></div></div>' +
     '<button class="player-start" type="button" aria-label="Play video" hidden>' + playIcon + '</button>' +
     '<div class="buffering" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="sr-only">Buffering</span></div>' +
     '<div class="controls" hidden><input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position" disabled>' +
@@ -234,8 +237,17 @@ function bindPlayer(signal, autoplay) {
   const mute = main.querySelector('#mute')
   const error = main.querySelector('#video-error')
   const buffering = main.querySelector('.buffering')
+  const recovery = main.querySelector('.seek-recovery')
+  const resume = recovery.querySelector('[data-resume-seek]')
+  const retry = recovery.querySelector('[data-retry-seek]')
+  const source = video.getAttribute('src')
   let bufferTimer
+  let seekTimer
   let scrubbing = false
+  let duration = 0
+  let lastPlayed = 0
+  let pendingSeek
+  let stalledSeek
 
   function formatTime(value) {
     const seconds = Number.isFinite(value) ? Math.floor(value) : 0
@@ -246,30 +258,130 @@ function bindPlayer(signal, autoplay) {
   }
 
   function updateTime() {
-    const durationKnown = Number.isFinite(video.duration) && video.duration > 0
+    if (Number.isFinite(video.duration) && video.duration > 0) duration = video.duration
     const seekable = video.seekable
-    seek.disabled = !durationKnown || !seekable.length || seekable.end(seekable.length - 1) === 0
-    if (!scrubbing) seek.value = durationKnown ? video.currentTime / video.duration * 100 : 0
-    const target = scrubbing ? Number(seek.value) * video.duration / 100 : video.currentTime
-    time.textContent = formatTime(target) + ' / ' + formatTime(video.duration)
+    if (!pendingSeek && !stalledSeek && !video.seeking && video.readyState >= 2) lastPlayed = video.currentTime
+    seek.disabled = Boolean(stalledSeek) || !duration ||
+      (!pendingSeek && (!seekable.length || seekable.end(seekable.length - 1) === 0))
+    const position = pendingSeek?.target ?? stalledSeek?.target ?? video.currentTime
+    if (!scrubbing) seek.value = duration ? position / duration * 100 : 0
+    const preview = scrubbing ? Number(seek.value) * duration / 100 : position
+    time.textContent = formatTime(preview) + ' / ' + formatTime(duration)
   }
 
   function stopBuffering() {
     clearTimeout(bufferTimer)
+    bufferTimer = undefined
     buffering.hidden = true
   }
 
+  function showBuffering() {
+    if (bufferTimer || !buffering.hidden) return
+    bufferTimer = setTimeout(() => {
+      bufferTimer = undefined
+      buffering.hidden = false
+    }, 220)
+  }
+
+  function syncPlayButton() {
+    const playing = pendingSeek?.play ?? !video.paused
+    toggle.disabled = Boolean(stalledSeek)
+    toggle.setAttribute('aria-label', playing ? 'Pause' : 'Play')
+    toggle.innerHTML = playing ? icon('pause') : playIcon
+    start.hidden = playing || Boolean(pendingSeek || stalledSeek || video.currentTime > 0 || video.error)
+  }
+
   function failed() {
+    if (signal.aborted || stalledSeek) return
+    if (pendingSeek) return retryOrStopSeek()
     stopBuffering()
     start.hidden = true
     error.textContent = 'This video could not play. The source may be unavailable or the format may be unsupported.'
     error.hidden = false
   }
 
+  function play() {
+    video.play().catch(error => {
+      if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') failed()
+    })
+  }
+
+  function finishSeek() {
+    const attempt = pendingSeek
+    if (!attempt?.applied || video.seeking) return
+    const needsPlayback = attempt.play && !video.ended && attempt.target < duration
+    if (video.readyState < (needsPlayback ? 3 : 2)) return
+    clearTimeout(seekTimer)
+    pendingSeek = undefined
+    stopBuffering()
+    syncPlayButton()
+  }
+
+  function applySeek() {
+    if (!pendingSeek || pendingSeek.applied || video.readyState < 1) return
+    pendingSeek.applied = true
+    pendingSeek.target = Math.min(pendingSeek.target, video.duration)
+    video.currentTime = pendingSeek.target
+    if (pendingSeek.play) play()
+    finishSeek()
+  }
+
+  function startSeek(attempt, reopen = false) {
+    clearTimeout(seekTimer)
+    stalledSeek = undefined
+    pendingSeek = { ...attempt, applied: false }
+    recovery.hidden = true
+    error.hidden = true
+    showBuffering()
+    seekTimer = setTimeout(retryOrStopSeek, 8000)
+    if (reopen) {
+      if (!video.getAttribute('src')) video.src = source
+      else video.load()
+    } else applySeek()
+    syncPlayButton()
+    updateTime()
+  }
+
+  function retryOrStopSeek() {
+    const attempt = pendingSeek
+    if (!attempt || signal.aborted) return
+    if (!attempt.retried) return startSeek({ ...attempt, retried: true }, true)
+    clearTimeout(seekTimer)
+    stalledSeek = attempt
+    pendingSeek = undefined
+    stopBuffering()
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+    recovery.querySelector('p').textContent = 'Circle stopped loading at ' + formatTime(attempt.target) + '.'
+    const fallback = Math.abs(attempt.target - attempt.from) < 1 ? 0 : attempt.from
+    resume.textContent = fallback ? 'Resume at ' + formatTime(fallback) : 'Start over'
+    resume.hidden = !fallback && attempt.target === 0
+    recovery.hidden = false
+    syncPlayButton()
+    updateTime()
+  }
+
+  function seekTo(target) {
+    if (!duration || seek.disabled || !Number.isFinite(target)) return
+    startSeek({
+      target: Math.max(0, Math.min(duration, target)), from: pendingSeek?.from ?? lastPlayed,
+      play: pendingSeek?.play ?? !video.paused, retried: false
+    })
+  }
+
   function flipPlayback() {
+    if (stalledSeek) return
+    if (pendingSeek) {
+      pendingSeek.play = !pendingSeek.play
+      if (!pendingSeek.play) video.pause()
+      else if (pendingSeek.applied) play()
+      syncPlayButton()
+      return finishSeek()
+    }
     if (video.paused) {
       error.hidden = true
-      video.play().catch(failed)
+      play()
     } else video.pause()
   }
 
@@ -279,24 +391,29 @@ function bindPlayer(signal, autoplay) {
     else video.webkitEnterFullscreen?.()
   }
 
-  for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay']) {
-    video.addEventListener(event, updateTime, { signal })
+  for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay', 'playing', 'seeked']) {
+    video.addEventListener(event, () => {
+      if (event === 'loadedmetadata') applySeek()
+      if (event === 'canplay' || event === 'playing' || event === 'seeked' || event === 'timeupdate') {
+        finishSeek()
+      }
+      if (!pendingSeek && (event === 'canplay' || event === 'playing' || event === 'seeked')) stopBuffering()
+      updateTime()
+    }, { signal })
   }
   video.addEventListener('waiting', () => {
-    clearTimeout(bufferTimer)
-    if (!video.paused) bufferTimer = setTimeout(() => { buffering.hidden = false }, 220)
+    if (pendingSeek || (!video.paused && !stalledSeek)) showBuffering()
   }, { signal })
-  video.addEventListener('playing', stopBuffering, { signal })
   for (const event of ['play', 'pause', 'ended']) {
     video.addEventListener(event, () => {
-      toggle.setAttribute('aria-label', video.paused ? 'Play' : 'Pause')
-      toggle.innerHTML = video.paused ? playIcon : icon('pause')
-      start.hidden = !video.paused || video.currentTime > 0 || Boolean(video.error)
-      if (video.paused) stopBuffering()
+      if (event === 'ended') finishSeek()
+      syncPlayButton()
+      if (video.paused && !pendingSeek) stopBuffering()
     }, { signal })
   }
   video.addEventListener('error', failed, { signal })
   signal.addEventListener('abort', () => {
+    clearTimeout(seekTimer)
     stopBuffering()
     video.pause()
     video.removeAttribute('src')
@@ -307,9 +424,17 @@ function bindPlayer(signal, autoplay) {
     updateTime()
   })
   seek.addEventListener('change', () => {
-    const target = Number(seek.value) * video.duration / 100
+    const target = Number(seek.value) * duration / 100
     scrubbing = false
-    if (Number.isFinite(target)) video.currentTime = target
+    seekTo(target)
+  })
+  retry.addEventListener('click', () => {
+    if (stalledSeek) startSeek(stalledSeek, true)
+  })
+  resume.addEventListener('click', () => {
+    if (!stalledSeek) return
+    const target = Math.abs(stalledSeek.target - stalledSeek.from) < 1 ? 0 : stalledSeek.from
+    startSeek({ ...stalledSeek, target }, true)
   })
   video.addEventListener('click', flipPlayback)
   toggle.addEventListener('click', flipPlayback)
@@ -328,15 +453,11 @@ function bindPlayer(signal, autoplay) {
       flipPlayback()
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
-      if (!seek.disabled) {
-        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + (event.key === 'ArrowRight' ? 10 : -10)))
-      }
+      seekTo((pendingSeek?.target ?? video.currentTime) + (event.key === 'ArrowRight' ? 10 : -10))
     } else if (event.key.toLowerCase() === 'm') video.muted = !video.muted
     else if (event.key.toLowerCase() === 'f') toggleFullscreen()
   }, { signal })
-  if (autoplay) video.play().catch(error => {
-    if (!signal.aborted && error.name !== 'NotAllowedError') failed()
-  })
+  if (autoplay) play()
 }
 
 async function startPlayback(item, episode, signal, autoplay) {
