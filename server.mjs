@@ -19,7 +19,7 @@ const index = readFileSync(new URL('./public/index.html', import.meta.url), 'utf
 const htmlRoute = /^\/(?:title|watch)\/(?:movie|series)\/tt\d{5,12}$/
 const videoRoute = /^\/video\/([a-f\d-]{36})$/
 const contentHeaders = {
-  'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; connect-src 'self' https://v3-cinemeta.strem.io https://cinemeta-catalogs.strem.io; img-src 'self' https://images.metahub.space https://image.tmdb.org https://episodes.metahub.space",
+  'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; connect-src 'self' https://v3-cinemeta.strem.io https://cinemeta-catalogs.strem.io; img-src 'self' https://images.metahub.space https://live.metahub.space https://image.tmdb.org https://episodes.metahub.space",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer'
 }

@@ -244,9 +244,10 @@ function bindPlayer(signal, autoplay) {
   }
 
   function updateTime() {
-    const canSeek = Number.isFinite(video.duration) && video.duration > 0
-    seek.disabled = !canSeek
-    if (!scrubbing) seek.value = canSeek ? video.currentTime / video.duration * 100 : 0
+    const durationKnown = Number.isFinite(video.duration) && video.duration > 0
+    const seekable = video.seekable
+    seek.disabled = !durationKnown || !seekable.length || seekable.end(seekable.length - 1) === 0
+    if (!scrubbing) seek.value = durationKnown ? video.currentTime / video.duration * 100 : 0
     const target = scrubbing ? Number(seek.value) * video.duration / 100 : video.currentTime
     time.textContent = formatTime(target) + ' / ' + formatTime(video.duration)
   }
@@ -276,7 +277,9 @@ function bindPlayer(signal, autoplay) {
     else video.webkitEnterFullscreen?.()
   }
 
-  for (const event of ['timeupdate', 'durationchange', 'loadedmetadata']) video.addEventListener(event, updateTime, { signal })
+  for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay']) {
+    video.addEventListener(event, updateTime, { signal })
+  }
   video.addEventListener('waiting', () => {
     clearTimeout(bufferTimer)
     if (!video.paused) bufferTimer = setTimeout(() => { buffering.hidden = false }, 220)
@@ -323,7 +326,7 @@ function bindPlayer(signal, autoplay) {
       flipPlayback()
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
-      if (Number.isFinite(video.duration)) {
+      if (!seek.disabled) {
         video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + (event.key === 'ArrowRight' ? 10 : -10)))
       }
     } else if (event.key.toLowerCase() === 'm') video.muted = !video.muted
