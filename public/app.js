@@ -1,5 +1,5 @@
 import { browse, search, title, imdbId, kinds } from './catalogue.js'
-import { browserCircleStream, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=6'
+import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=7'
 
 const main = document.querySelector('main')
 const circleTab = circleWebOrigins.includes(location.origin)
@@ -232,7 +232,7 @@ function watch(item, episode) {
       '">Next episode' + icon('expand') + '</a>' : '')
 }
 
-function bindPlayer(signal, autoplay) {
+function bindPlayer(signal, autoplay, reportAudio) {
   const video = main.querySelector('video')
   if (!video) return
   const player = main.querySelector('#player')
@@ -259,6 +259,7 @@ function bindPlayer(signal, autoplay) {
   let stalledSeek
   let rangeCheck
   let rangeProbe
+  let audioReported = false
 
   function formatTime(value) {
     const seconds = Number.isFinite(value) ? Math.floor(value) : 0
@@ -335,6 +336,7 @@ function bindPlayer(signal, autoplay) {
     start.hidden = true
     error.textContent = 'This video could not play. The source may be unavailable or the format may be unsupported.'
     error.hidden = false
+    reportAudio?.('failed')
   }
 
   function play() {
@@ -464,12 +466,24 @@ function bindPlayer(signal, autoplay) {
       updateTime()
     }, { signal })
   }
-  video.addEventListener('timeupdate', () => {
+  function updateAudio() {
+    if (video.muted || video.volume === 0) return
+    const decoded = video.webkitAudioDecodedByteCount
+    if (decoded > 0 && !audioReported) {
+      audioReported = true
+      reportAudio?.('decoded')
+    }
     const played = video.played
-    if (!played.length || video.muted || !video.webkitVideoDecodedByteCount) return
+    if (!played.length || video.paused || video.seeking || pendingSeek || stalledSeek ||
+        !video.webkitVideoDecodedByteCount) return
     const span = played.end(played.length - 1) - played.start(played.length - 1)
-    audioStatus.hidden = video.webkitAudioDecodedByteCount !== 0 || span < 2
-  }, { signal })
+    audioStatus.hidden = decoded !== 0 || span < 2
+    if (decoded === 0 && span >= 4 && video.currentTime < 7) {
+      reportAudio?.('silent')
+    }
+  }
+  video.addEventListener('playing', updateAudio, { signal })
+  video.addEventListener('timeupdate', updateAudio, { signal })
   if (video.audioTracks) {
     function updateAudioTracks() {
       const tracks = Array.from(video.audioTracks)
@@ -550,7 +564,32 @@ async function startPlayback(item, episode, signal, autoplay) {
   if (episode) Object.assign(request, { season: episode.season, episode: episode.number })
   const watchPage = main.querySelector('.route-enter')
   const tried = new Set()
+  const audioKey = 'screenroom.audio.' + item.id + (episode ? '.' + episode.key : '')
+  let preferredSource
+  if (circleTab) {
+    try { preferredSource = circleVideo(sessionStorage.getItem(audioKey))?.href } catch {}
+  }
+  let recoveryTried = false
   let activePlayer
+
+  function handleAudio(source, state) {
+    if (state === 'decoded') {
+      if (new URL(source).search) return
+      preferredSource = source
+      try { sessionStorage.setItem(audioKey, source) } catch {}
+      return
+    }
+    if (state === 'failed' && preferredSource !== source) return
+    if (preferredSource === source) {
+      preferredSource = undefined
+      try { sessionStorage.removeItem(audioKey) } catch {}
+    }
+    const button = watchPage.querySelector('[data-other-stream]')
+    if (!recoveryTried && !button.disabled) {
+      recoveryTried = true
+      void findAnother(button, state === 'silent')
+    }
+  }
 
   function showPlayer(source, playNow) {
     tried.add(source)
@@ -563,35 +602,47 @@ async function startPlayback(item, episode, signal, autoplay) {
       watchPage.querySelector('[data-other-stream]').hidden = false
     }
     watchPage.querySelector('video').src = source
-    bindPlayer(AbortSignal.any([signal, activePlayer.signal]), playNow)
+    bindPlayer(AbortSignal.any([signal, activePlayer.signal]), playNow,
+      circleTab ? state => handleAudio(source, state) : undefined)
   }
 
-  watchPage.addEventListener('click', async event => {
-    const button = event.target.closest('[data-other-stream]')
-    if (!circleTab || !button || button.disabled) return
+  async function findAnother(button, automatic = false) {
     const status = watchPage.querySelector('#stream-status')
+    const video = watchPage.querySelector('video')
     button.disabled = true
     status.textContent = 'Finding another stream…'
     status.hidden = false
     try {
       const source = await browserCircleStream(request, signal, location.origin, tried)
       if (signal.aborted) return
+      if (automatic && (video.paused || video.muted || video.volume === 0 || video.seeking ||
+          video.currentTime > 12 || video.webkitAudioDecodedByteCount > 0)) {
+        button.disabled = false
+        status.hidden = true
+        return
+      }
+      const restoreFocus = document.activeElement === button
       activePlayer.abort()
       watchPage.innerHTML = watch(item, episode)
       showPlayer(source, true)
-      watchPage.querySelector('#toggle').focus({ preventScroll: true })
+      if (restoreFocus) watchPage.querySelector('#toggle').focus({ preventScroll: true })
     } catch (error) {
       if (signal.aborted) return
       button.disabled = false
       status.textContent = error.message
     }
+  }
+
+  watchPage.addEventListener('click', event => {
+    const button = event.target.closest('[data-other-stream]')
+    if (circleTab && button && !button.disabled) void findAnother(button)
   }, { signal })
 
   const state = watchPage.querySelector('.player-state')
   try {
     let source
     if (hosted) {
-      source = await browserCircleStream(request, signal, location.origin)
+      source = preferredSource ?? await browserCircleStream(request, signal, location.origin)
     } else {
       const response = await fetch('/api/play?' + new URLSearchParams(request), { signal })
       const data = await response.json()

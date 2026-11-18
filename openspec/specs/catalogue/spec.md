@@ -39,6 +39,12 @@ Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
 - **WHEN** the visitor requests another stream from the Circle playback tab
 - **THEN** the app tries a different matching Circle link and keeps the current player if no alternative is found
 
+#### Scenario: The browser plays video without decoding audio at startup
+
+- **WHEN** the browser reports several seconds of unmuted video playback without decoded audio
+- **THEN** the player tries one matching alternative while the visitor is still near the start
+- **AND** reopening the same title in the tab prefers the stream that last decoded audio
+
 #### Scenario: Circle stalls during a seek
 
 - **WHEN** a seek remains incomplete for eight seconds

@@ -1,5 +1,6 @@
 export const circleWebOrigins = ['http://new.circleftp.net:5000', 'http://15.1.1.50:5000']
 const circleIps = new Set(['15.1.1.1', '15.1.1.4', '15.1.1.5', '15.1.1.50', '103.170.204.84'])
+const aliasCache = new Map()
 const mediaTypes = new Map([
   ['mp4', 'video/mp4'], ['m4v', 'video/mp4'], ['mkv', 'video/x-matroska'],
   ['webm', 'video/webm'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo']
@@ -89,6 +90,8 @@ function episodeLinks(content, season, episode) {
 
 async function verifiedAliases(id, signal) {
   if (!/^tt\d{5,12}$/.test(id ?? '')) return []
+  const cached = aliasCache.get(id)
+  if (cached) return cached
   const timeout = AbortSignal.timeout(4000)
   const settings = { credentials: 'omit', signal: signal ? AbortSignal.any([signal, timeout]) : timeout }
   async function wikidata(params) {
@@ -104,13 +107,18 @@ async function verifiedAliases(id, signal) {
       languages: 'en|en-gb|en-us|bn|ko|ja|zh|zh-hans|zh-hant|hi|es|fr|de|it|ru|tr|ta|te|ml|kn|th|id|ar' })
     const values = (entity, property) => (entity.claims?.[property] ?? [])
       .filter(claim => claim.rank !== 'deprecated').map(claim => claim.mainsnak?.datavalue?.value)
-    return Object.values(data.entities ?? {}).filter(entity => values(entity, 'P345').includes(id)).flatMap(entity => [
+    const aliases = Object.values(data.entities ?? {}).filter(entity => values(entity, 'P345').includes(id)).flatMap(entity => [
       ...values(entity, 'P1476').map(title => title?.text),
       ...values(entity, 'P1705').map(title => title?.text),
       ...['en', 'en-gb', 'en-us', 'bn'].flatMap(language => (entity.aliases?.[language] ?? []).map(alias => alias.value)),
       ...Object.values(entity.labels ?? {}).map(label => label.value),
       ...Object.values(entity.aliases ?? {}).flat().map(alias => alias.value)
     ]).filter(title => typeof title === 'string' && title.trim() && title.length <= 280)
+    if (aliases.length) {
+      if (aliasCache.size >= 64) aliasCache.delete(aliasCache.keys().next().value)
+      aliasCache.set(id, aliases)
+    }
+    return aliases
   } catch {
     return []
   }

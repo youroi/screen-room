@@ -136,6 +136,10 @@ test('Circle retries the verified original title and skips other IMDb IDs and re
   const { signal } = new AbortController()
   assert.equal(await browserCircleStream(item, signal, 'http://new.circleftp.net:5000'), release)
   assert.deepEqual(urls.map(url => url.searchParams.get('searchTerm')).filter(Boolean), ['Parasite', '기생충'])
+  urls.length = 0
+  await assert.rejects(browserCircleStream(item, signal, 'http://new.circleftp.net:5000', new Set([release])),
+    /No other matching Circle stream/)
+  assert.deepEqual(urls.map(url => url.hostname), ['new.circleftp.net', 'new.circleftp.net', 'new.circleftp.net'])
 })
 
 test('episodes match explicit season and episode codes across unnamed groups', async () => {
