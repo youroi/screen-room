@@ -106,3 +106,48 @@ test('the Circle web player uses HTTP only inside an approved Circle tab', async
   await assert.rejects(browserCircleStream(item, signal, 'http://unrelated.example'), /Open the Circle tab/)
   assert.deepEqual(requests, [])
 })
+
+test('Circle retries the verified original title and skips other IMDb IDs and release years', async t => {
+  const urls = []
+  const release = 'http://15.1.1.50/parasite.mp4'
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(input)
+    urls.push(url)
+    if (url.hostname === 'www.wikidata.org') {
+      if (url.searchParams.get('action') === 'query') {
+        assert.equal(url.searchParams.get('srsearch'), 'haswbstatement:P345=tt6751668')
+        return Response.json({ query: { search: [{ title: 'Q61448040' }, { title: 'Q123' }] } })
+      }
+      const claim = value => [{ mainsnak: { datavalue: { value } } }]
+      return Response.json({ entities: {
+        Q61448040: { claims: { P345: claim('tt6751668'), P1476: claim({ text: '기생충' }) } },
+        Q123: { claims: { P345: claim('tt1234567'), P1476: claim({ text: 'Wrong title' }) } }
+      } })
+    }
+    if (url.pathname === '/api/posts') return Response.json({ posts: url.searchParams.get('searchTerm') === '기생충' ? [
+      { id: 1, title: '기생충.1982.1080p', type: 'singleVideo' },
+      { id: 2, title: '기생충.2019.1080p', type: 'singleVideo', imdb_id: 'tt1234567' },
+      { id: 3, title: '기생충.2019.1080p.WEB-DL', type: 'singleVideo' }
+    ] : [] })
+    assert.equal(url.pathname, '/api/posts/3')
+    return Response.json({ content: release })
+  })
+  const item = { id: 'tt6751668', title: 'Parasite', kind: 'movie', year: '2019' }
+  const { signal } = new AbortController()
+  assert.equal(await browserCircleStream(item, signal, 'http://new.circleftp.net:5000'), release)
+  assert.deepEqual(urls.map(url => url.searchParams.get('searchTerm')).filter(Boolean), ['Parasite', '기생충'])
+})
+
+test('episodes match explicit season and episode codes across unnamed groups', async () => {
+  const base = 'http://15.1.1.50/'
+  const read = async path => path.includes('?')
+    ? { posts: [{ id: '8', title: 'Harbour.2021.1080p', type: 'series' }] }
+    : { content: [{ episodes: [{ title: 'Episode 3', link: base + 'Harbour.S01E03.mkv' }] }, {
+      episodes: [{ title: '2x03', link: base + 'Harbour.2x03.mp4' }, { title: 'S02E03', link: base + 'Harbour.S02E03.mkv' }]
+    }] }
+  const episode = { title: 'Harbour', year: '2021', kind: 'series', season: 2, episode: 3 }
+  const first = await findCircleStream(episode, read)
+  assert.equal(first.href, base + 'Harbour.2x03.mp4')
+  const other = await findCircleStream(episode, read, value => value?.endsWith('.mkv') ? new URL(value) : null)
+  assert.equal(other.href, base + 'Harbour.S02E03.mkv')
+})

@@ -48,16 +48,17 @@ export function createApp(circle = createCircle()) {
       if (path === '/api/play') {
         const params = url.searchParams
         const kind = params.get('kind')
+        const id = params.get('id') ?? ''
         const title = (params.get('title') ?? '').trim()
         const year = params.get('year') ?? ''
         const season = Number(params.get('season'))
         const episode = Number(params.get('episode'))
-        if (!['movie', 'series'].includes(kind) || !title || title.length > 280 || (year && !/^\d{4}$/.test(year)) ||
+        if (!['movie', 'series'].includes(kind) || (id && !/^tt\d{5,12}$/.test(id)) || !title || title.length > 280 || (year && !/^\d{4}$/.test(year)) ||
             (kind === 'series' && (![season, episode].every(n => Number.isInteger(n) && n > 0 && n <= 5000)))) {
           return json(400, { error: 'Invalid title or episode.' })
         }
 
-        const address = await circle.resolve({ kind, title, year, season, episode })
+        const address = await circle.resolve({ kind, id, title, year, season, episode })
         if (!address) return json(404, { error: 'No matching Circle stream was found.' })
         if (streams.size >= 120) streams.delete(streams.keys().next().value)
         const key = randomUUID()

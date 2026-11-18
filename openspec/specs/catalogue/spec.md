@@ -28,6 +28,17 @@ Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
 - **WHEN** the visitor runs the Screen Room bookmark on an approved Circle HTTP origin
 - **THEN** the browser loads the Screen Room UI and resolves playback from that Circle origin
 
+#### Scenario: Circle lists a release under a different name
+
+- **WHEN** the primary title lookup returns no playable match and the title has an IMDb identifier
+- **THEN** the app tries original and alternate names linked to that identifier in Wikidata
+- **AND** it rejects releases with a conflicting identifier, release year, or requested episode
+
+#### Scenario: The browser cannot play the audio of a matched stream
+
+- **WHEN** the visitor requests another stream from the Circle playback tab
+- **THEN** the app tries a different matching Circle link and keeps the current player if no alternative is found
+
 #### Scenario: Circle stalls during a seek
 
 - **WHEN** a seek remains incomplete for eight seconds
