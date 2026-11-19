@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
+import { viaSource } from './public/browser-audio.js'
 import { browserCircleStream, findCircleStream } from './public/playback.js'
 
 test('Via reads only bounded byte ranges of the current Circle MKV', async () => {
@@ -27,6 +28,26 @@ test('Via reads only bounded byte ranges of the current Circle MKV', async () =>
   assert.equal((await window.screenRoomReadMedia(source, 1, 17, signal)).bytes.byteLength, 16)
   assert.equal(calls.length, 1)
   assert.equal(calls[0].headers.Range, 'bytes=1-16')
+})
+
+test('Via audio reads the file size from a one-byte range when HEAD is unavailable', async () => {
+  const signal = new AbortController().signal
+  let size = 800
+  const calls = []
+  const data = viaSource('http://ftp16.circleftp.net/Pilot.mkv', async (source, start, end) => {
+    assert.equal(source, 'http://ftp16.circleftp.net/Pilot.mkv')
+    calls.push([start, end])
+    return {
+      headers: 'Content-Range: bytes ' + start + '-' + (end - 1) + '/' + size,
+      bytes: new Uint8Array(end - start).fill(7).buffer
+    }
+  }, signal)
+
+  assert.equal(await data.getSize(), 800)
+  assert.deepEqual(await data.read(20, 23), Uint8Array.of(7, 7, 7))
+  assert.deepEqual(calls, [[0, 1], [20, 23]])
+  size = 803
+  await assert.rejects(data.read(23, 25), /different byte range/)
 })
 
 async function listen(server, context) {
