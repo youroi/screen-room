@@ -16,7 +16,14 @@ Screen Room SHALL show movies, series, search results and title details from an 
 
 ### Requirement: Circle playback lookup
 
-Screen Room SHALL look for a matching Circle video when the visitor opens Watch.
+Screen Room SHALL look for a matching Circle video when the visitor opens the playback tab.
+
+#### Scenario: A visitor opens Watch from the public site
+
+- **WHEN** the visitor opens Watch on the public site
+- **THEN** the page displays the title or episode and an action to open the playback tab
+- **AND** Circle receives no requests until the visitor opens the playback tab
+- **AND** Browse, Search and title details links in the playback tab return to the public site
 
 #### Scenario: The requested stream is unavailable
 
