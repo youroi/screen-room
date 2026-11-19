@@ -1,4 +1,4 @@
-import { browse, search, title, imdbId, kinds } from './catalogue.js?v=2'
+import { browse, search, title, imdbId, kinds } from './catalogue.js?v=3'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
@@ -14,9 +14,12 @@ const catalogueCache = new Map()
 const scrollPositions = new Map()
 let currentRoute = readRoute()
 history.scrollRestoration = 'manual'
-for (const link of document.querySelectorAll('header [data-route]')) {
+for (const link of document.querySelectorAll('header [data-route], footer [data-route]')) {
   link.setAttribute('href', routeTarget(link.getAttribute('href')))
 }
+const playerHelp = document.querySelector('[data-player-help]')
+playerHelp.href = webPlayerHelp
+playerHelp.hidden = !hosted
 document.querySelector('.skip').addEventListener('click', event => {
   event.preventDefault()
   main.focus()
@@ -100,6 +103,69 @@ function card(item, index, showKind) {
     '</a></li>'
 }
 
+function featuredTitles(items, kind) {
+  const titles = items.filter(item => item.backdrop).slice(0, 4)
+  if (!titles.length) return ''
+  const slides = titles.map((item, index) => {
+    const facts = [item.year, ...item.genres.slice(0, 2)].filter(Boolean)
+    return '<article class="feature-slide"' + (index ? ' inert aria-hidden="true"' : '') + '>' +
+      '<img class="feature-art" src="' + escape(item.backdrop) + '" alt="" referrerpolicy="no-referrer" ' +
+      (index === 0 ? 'fetchpriority="high"' : 'loading="lazy"') + ' decoding="async">' +
+      '<div class="feature-copy"><h2>' + escape(item.title) + '</h2><p class="meta">' +
+      facts.map(value => '<span>' + escape(value) + '</span>').join('') + '</p>' +
+      (item.description ? '<p class="feature-description">' + escape(item.description) + '</p>' : '') +
+      '<a class="button primary" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
+      'View details' + icon('expand') + '</a></div></article>'
+  }).join('')
+  const controls = titles.length > 1 ? '<div class="feature-controls">' +
+    '<button type="button" class="feature-arrow" data-feature-step="-1" aria-label="Previous featured title" disabled>' + icon('back') + '</button>' +
+    '<div class="feature-pips">' + titles.map((item, index) =>
+      '<button type="button" data-feature-index="' + index + '" aria-label="' + escape('Show ' + item.title) +
+      '"' + (index === 0 ? ' aria-current="true"' : '') + '></button>').join('') + '</div>' +
+    '<button type="button" class="feature-arrow" data-feature-step="1" aria-label="Next featured title">' + icon('expand') + '</button></div>' : ''
+  return '<section class="featured" aria-label="Featured ' + (kind === 'series' ? 'series' : 'movies') + '">' +
+    '<div class="feature-track" role="group" tabindex="0" aria-label="Featured titles">' + slides + '</div>' + controls + '</section>'
+}
+
+function bindFeatured(feature, signal) {
+  const track = feature.querySelector('.feature-track')
+  const slides = feature.querySelectorAll('.feature-slide')
+  const pips = [...feature.querySelectorAll('[data-feature-index]')]
+  if (!pips.length) return
+  const previous = feature.querySelector('[data-feature-step="-1"]')
+  const next = feature.querySelector('[data-feature-step="1"]')
+  let selected = 0
+
+  function select(index) {
+    track.scrollTo({ left: Math.max(0, Math.min(pips.length - 1, index)) * track.clientWidth })
+  }
+
+  track.addEventListener('scroll', () => {
+    const index = Math.max(0, Math.min(pips.length - 1, Math.round(track.scrollLeft / track.clientWidth)))
+    if (index === selected) return
+    slides[selected].inert = true
+    slides[selected].setAttribute('aria-hidden', 'true')
+    slides[index].inert = false
+    slides[index].removeAttribute('aria-hidden')
+    pips[selected].removeAttribute('aria-current')
+    pips[index].setAttribute('aria-current', 'true')
+    selected = index
+    previous.disabled = selected === 0
+    next.disabled = selected === pips.length - 1
+  }, { signal, passive: true })
+  track.addEventListener('keydown', event => {
+    if (event.target !== track || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
+    event.preventDefault()
+    select(selected + (event.key === 'ArrowLeft' ? -1 : 1))
+  }, { signal })
+  feature.querySelector('.feature-controls').addEventListener('click', event => {
+    const button = event.target.closest('button')
+    if (!button) return
+    select(button.dataset.featureIndex === undefined
+      ? selected + Number(button.dataset.featureStep) : Number(button.dataset.featureIndex))
+  }, { signal })
+}
+
 function linkToPage(url, page) {
   const params = new URLSearchParams(url.search)
   if (page > 1) params.set('page', page)
@@ -122,7 +188,7 @@ function message(title, detail, action = '') {
 
 const retryButton = '<button class="button quiet" type="button" data-retry>Try again</button>'
 
-function rowsHeader(searching, query, kind, genre) {
+function rowsHeader(searching, query, kind, genre, featured) {
   if (searching) {
     return '<div class="section-head"><h1>Search</h1></div>' +
       '<form class="search-form" action="/search" role="search">' + searchIcon +
@@ -133,7 +199,9 @@ function rowsHeader(searching, query, kind, genre) {
   const tabs = [['movie', 'Movies'], ['series', 'Series']].map(([value, name]) =>
     '<a href="' + escape(routeTarget('/?kind=' + value + filter)) + '" data-route' +
     (kind === value ? ' aria-current="page"' : '') + '>' + name + '</a>').join('')
-  return '<div class="section-head"><h1>Browse</h1><div class="browse-filters">' +
+  const collection = (genre || 'Popular') + (kind === 'series' ? ' series' : ' movies')
+  const heading = featured ? 'h2' : 'h1'
+  return '<div class="section-head"><' + heading + '>' + escape(collection) + '</' + heading + '><div class="browse-filters">' +
     '<nav class="type-tabs" aria-label="Title type">' + tabs + '</nav><div class="category">' +
     '<select name="genre" aria-label="Genre">' +
     genres.map(value => '<option value="' + escape(value) + '"' +
@@ -148,7 +216,8 @@ async function list(url, signal) {
   const genre = genres.includes(url.searchParams.get('genre')) ? url.searchParams.get('genre') : ''
   const page = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('page'), 10) || 1))
   routeLabel(searching ? 'Search' : 'Browse')
-  const heading = rowsHeader(searching, query, kind, genre)
+  const showFeature = !searching && !genre && page === 1
+  const heading = rowsHeader(searching, query, kind, genre, showFeature)
   if (searching && !query) {
     paint(heading, signal)
     return
@@ -158,13 +227,20 @@ async function list(url, signal) {
   const key = searching ? 'search:' + query : [kind, genre, page].join(':')
   const cached = catalogueCache.get(key)
   const saved = cached?.expires > Date.now()
-  paint(heading + '<div id="list-body">' + (saved ? '' : skeleton) + '</div>', signal)
+  const feature = showFeature ? '<h1 class="sr-only">Browse</h1><div id="featured-area">' +
+    (saved ? '' : '<div class="feature-skeleton" aria-hidden="true"></div>') + '</div>' : ''
+  paint(feature + heading + '<div id="list-body">' + (saved ? '' : skeleton) + '</div>', signal)
   try {
     const data = saved ? cached.data : await (searching ? search(query, signal) : browse({ kind, genre, page, signal }))
     if (signal.aborted) return
     if (!saved) {
       if (catalogueCache.size >= 16) catalogueCache.delete(catalogueCache.keys().next().value)
       catalogueCache.set(key, { data, expires: Date.now() + 90_000 })
+    }
+    if (showFeature) {
+      const area = main.querySelector('#featured-area')
+      area.innerHTML = featuredTitles(data.items, kind)
+      if (area.firstElementChild) bindFeatured(area.firstElementChild, signal)
     }
     const listBody = main.querySelector('#list-body')
     listBody.innerHTML = data.items.length
@@ -174,6 +250,7 @@ async function list(url, signal) {
         pageLinks(url, page, data.hasNext)
   } catch (error) {
     if (!signal.aborted) {
+      main.querySelector('#featured-area')?.replaceChildren()
       main.querySelector('#list-body').innerHTML = message('Catalogue unavailable', error.message,
         retryButton)
     }

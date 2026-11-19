@@ -31,7 +31,7 @@ function normalize(meta, kind) {
   if (!imdbId.test(meta?.id) || !string(meta.name)) return null
   const year = /\b(?:19|20)\d{2}\b/.exec(string(meta.releaseInfo ?? meta.year))?.[0] ?? ''
   return {
-    id: meta.id, kind, title: string(meta.name), year, artwork: image(meta.poster),
+    id: meta.id, kind, title: string(meta.name), year, artwork: image(meta.poster), backdrop: image(meta.background),
     description: string(meta.description, 1800), duration: string(meta.runtime, 32),
     genres: (Array.isArray(meta.genres) ? meta.genres : []).slice(0, 3).map(value => string(value, 40)).filter(Boolean)
   }
