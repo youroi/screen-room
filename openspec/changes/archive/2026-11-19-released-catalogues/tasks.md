@@ -7,4 +7,4 @@
 ## 2. Verify
 
 - [x] Test release eligibility, backfill, ranking, and snapshot retention.
-- [ ] Verify the published shelves and browse navigation in Chromium.
+- [x] Verify the published shelves and browse navigation in Chromium.

@@ -136,18 +136,21 @@ Search SHALL present matching movies and series as the visitor types and keep a 
 
 ### Requirement: Weekly trends and regional digital releases
 
-Home SHALL display weekly TMDB trends and recent confirmed regional digital movie releases from a validated snapshot.
+Home SHALL display released weekly TMDB trends and recent regional public movie releases from a validated snapshot.
 
 #### Scenario: A visitor browses the new rows
 
 - **WHEN** a valid snapshot is available
-- **THEN** the app preserves the weekly feed order and sorts Latest Releases by confirmed digital date
-- **AND** the app displays the approved TMDB logo and attribution notice
-- **AND** both rows remain independently ranked when a title appears in both
+- **THEN** Trending preserves weekly feed order after removing titles without a regular public release
+- **AND** Latest Releases sorts movies by confirmed regional regular theatrical or digital release date
+- **AND** a digital entry in Latest requires a streaming, rental, or purchase listing in the same market
+- **AND** upcoming titles, premieres, and previews do not qualify
+- **AND** the two rows preserve their source orders when a title qualifies in both
+- **AND** the app displays the approved TMDB logo and attributes TMDB and JustWatch
 
 #### Scenario: An upstream request fails
 
-- **WHEN** the scheduled refresh fails to produce a valid snapshot
+- **WHEN** the refresh fails to produce a valid snapshot
 - **THEN** the deployed site retains the previous snapshot
 
 ### Requirement: Official Hindi dub priority
@@ -160,3 +163,13 @@ The existing popular and genre rows SHALL prioritise officially confirmed Hindi 
 - **THEN** the title moves ahead of unconfirmed titles within its eligible row
 - **AND** the priority implies no Circle source or audio availability
 - **AND** the Top Rated row retains the chart's relative order
+
+### Requirement: Released popular titles
+
+Popular Movies and Popular Series SHALL come from the release-checked snapshot.
+
+#### Scenario: The popularity feed contains an unreleased title
+
+- **WHEN** a movie lacks a regular theatrical or digital release or a series lacks an aired full episode
+- **THEN** the row takes the next eligible candidate from the popularity feed
+- **AND** official Hindi dub priority applies within the eligible row
