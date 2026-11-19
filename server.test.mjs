@@ -86,11 +86,11 @@ test('audio preference keeps Hindi ahead of the original, default and commentary
   assert.deepEqual(orderAudioTracks(tracks.slice(0, 3)), [tracks[2], tracks[1], tracks[0]])
 })
 
-test('decoded audio pauses before an underrun and reuses pending PCM to resume', { timeout: 2000 }, async t => {
+test('decoded audio waits for a longer reserve after an underrun', { timeout: 2000 }, async t => {
   const controller = new AbortController()
   t.after(() => controller.abort())
   const video = Object.assign(new EventTarget(), {
-    paused: true, currentTime: 0, playbackRate: 1, readyState: 4, duration: 2
+    paused: true, currentTime: 0, playbackRate: 1, readyState: 4, duration: 4
   })
   const context = {
     currentTime: 0,
@@ -98,13 +98,19 @@ test('decoded audio pauses before an underrun and reuses pending PCM to resume',
     createBufferSource: () => ({ playbackRate: {}, connect() {}, start() {}, stop() {} })
   }
   const download = Promise.withResolvers()
+  const partial = Promise.withResolvers()
+  const refill = Promise.withResolvers()
   const interrupted = Promise.withResolvers()
   let readers = 0
   const sink = {
     async *buffers() {
       readers++
-      for (let frame = 0; frame < 20; frame++) {
+      for (let frame = 0; frame < 40; frame++) {
         if (frame === 6) await download.promise
+        if (frame === 12) {
+          partial.resolve()
+          await refill.promise
+        }
         yield { timestamp: frame / 10, buffer: { duration: 0.1 } }
       }
     }
@@ -127,8 +133,16 @@ test('decoded audio pauses before an underrun and reuses pending PCM to resume',
   await interrupted.promise
   assert.ok(video.paused)
 
+  let resumed = false
+  const ready = audio.ready(video.currentTime).then(result => {
+    resumed = result
+    return result
+  })
   download.resolve()
-  assert.ok(await audio.ready(video.currentTime))
+  await partial.promise
+  assert.equal(resumed, false)
+  refill.resolve()
+  assert.ok(await ready)
   assert.equal(readers, 1)
 })
 
