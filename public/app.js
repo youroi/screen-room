@@ -237,10 +237,11 @@ function watch(item, episode) {
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
     '<button type="button" id="settings-toggle" aria-label="Playback settings" title="Playback settings" aria-expanded="false" aria-controls="player-settings">' + icon('settings') + '</button>' +
     '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button></div>' +
+    '<label class="player-volume"><span>Volume</span><input id="player-volume" type="range" min="0" max="1" step="0.05" value="1">' +
+    '<output for="player-volume" aria-hidden="true">100%</output></label>' +
     '<div class="player-settings-panel" id="player-settings" hidden><label hidden>Audio <select id="audio-track"></select></label>' +
     '<label>Speed <select id="playback-speed"><option value="0.75">0.75×</option><option value="1" selected>Normal</option>' +
     '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>' +
-    '<label>Volume <input id="player-volume" type="range" min="0" max="1" step="0.05" value="1"></label>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
     '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
     'Your browser may not support this stream’s audio format.</p>' +
@@ -265,6 +266,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const time = main.querySelector('#time')
   const mute = main.querySelector('#mute')
   const volume = main.querySelector('#player-volume')
+  const volumeValue = volume.parentElement.querySelector('output')
   const speed = main.querySelector('#playback-speed')
   const settings = main.querySelector('#settings-toggle')
   const settingsPanel = main.querySelector('#player-settings')
@@ -290,6 +292,9 @@ function bindPlayer(signal, autoplay, reportAudio) {
   let audioSelection
   let decodedAudio
   let userMuted = video.muted
+  let volumeLevel = video.volume
+  let lastVolume = volumeLevel || 1
+  let playRequest
   let audioFailure
   let bufferTimer
   let seekTimer
@@ -351,7 +356,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
       main.querySelector('.watch-head h1').textContent,
       'Source: ' + url.origin + (mediaType(url) ? ' (' + mediaType(url) + ')' : ''),
       'Current position: ' + formatTime(video.currentTime) + ' / ' + formatTime(duration),
-      'Audio: ' + (userMuted ? 'muted' : 'unmuted') + ', volume ' + Math.round(video.volume * 100) + '%',
+      'Audio: ' + (userMuted ? 'muted' : 'unmuted') + ', volume ' + Math.round(volumeLevel * 100) + '%',
       'Audio decoder: ' + (audioRecovery ?? 'native') + (audioFailure ? ' (' + audioFailure + ')' : ''),
       'Decoded bytes: audio ' + (video.webkitAudioDecodedByteCount ?? 'unavailable') +
         ', video ' + (video.webkitVideoDecodedByteCount ?? 'unavailable'),
@@ -434,7 +439,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   }
 
   function syncPlayButton() {
-    const playing = pendingSeek?.play ?? !video.paused
+    const playing = pendingSeek?.play ?? (Boolean(playRequest) || !video.paused)
     toggle.disabled = Boolean(stalledSeek)
     toggle.setAttribute('aria-label', playing ? 'Pause' : 'Play')
     toggle.innerHTML = playing ? icon('pause') : playIcon
@@ -444,6 +449,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function failed() {
     if (signal.aborted || stalledSeek) return
     if (pendingSeek) return stopSeek('media error')
+    playRequest = undefined
     stopBuffering()
     start.hidden = true
     error.textContent = 'This video could not play. The source may be unavailable or the format may be unsupported.'
@@ -452,10 +458,42 @@ function bindPlayer(signal, autoplay, reportAudio) {
   }
 
   function play() {
+    playRequest = {}
     if (matroska) startBrowserAudio()
+    resumePlayback()
+  }
+
+  function resumePlayback() {
+    const request = playRequest
+    if (!request || request.waiting || signal.aborted) return
+    if (audioContext && audioRecovery !== 'native' && !userMuted && volumeLevel > 0) {
+      showBuffering()
+      syncPlayButton()
+      if (decodedAudio) {
+        request.waiting = true
+        void decodedAudio.ready(video.currentTime).then(ready => {
+          if (ready && playRequest === request) playVideo()
+        })
+      }
+      return
+    }
+    playVideo()
+  }
+
+  function playVideo() {
+    playRequest = undefined
     video.play().catch(error => {
+      stopBuffering()
+      syncPlayButton()
       if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') failed()
     })
+  }
+
+  function pausePlayback() {
+    playRequest = undefined
+    video.pause()
+    stopBuffering()
+    syncPlayButton()
   }
 
   function checkRange() {
@@ -479,6 +517,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (!pendingSeek || pendingSeek.checkingRange || pendingSeek.applied || video.readyState < 1) return
     pendingSeek.applied = true
     pendingSeek.target = Math.min(pendingSeek.target, video.duration)
+    if (audioContext && audioRecovery !== 'native' && !userMuted && volumeLevel > 0) video.pause()
     decodedAudio?.prime(pendingSeek.target)
     video.currentTime = pendingSeek.target
     if (pendingSeek.play) play()
@@ -505,6 +544,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     clearTimeout(seekTimer)
     stalledSeek = attempt
     pendingSeek = undefined
+    playRequest = undefined
     stopBuffering()
     showDebug(attempt, reason)
     decodedAudio?.reset()
@@ -524,7 +564,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (!duration || seek.disabled || !Number.isFinite(target)) return
     target = Math.max(0, Math.min(duration, target))
     const attempt = {
-      target, from: pendingSeek?.from ?? lastPlayed, play: pendingSeek?.play ?? !video.paused,
+      target, from: pendingSeek?.from ?? lastPlayed, play: pendingSeek?.play ?? (Boolean(playRequest) || !video.paused),
       buffered: formatRanges(video.buffered)
     }
     const buffered = video.buffered
@@ -558,15 +598,15 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (stalledSeek) return
     if (pendingSeek) {
       pendingSeek.play = !pendingSeek.play
-      if (!pendingSeek.play) video.pause()
+      if (!pendingSeek.play) pausePlayback()
       else if (pendingSeek.applied) play()
       syncPlayButton()
       return finishSeek()
     }
-    if (video.paused) {
+    if (video.paused && !playRequest) {
       error.hidden = true
       play()
-    } else video.pause()
+    } else pausePlayback()
   }
 
   function toggleFullscreen() {
@@ -575,17 +615,17 @@ function bindPlayer(signal, autoplay, reportAudio) {
     else video.webkitEnterFullscreen?.()
   }
 
-  for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay', 'playing', 'seeked']) {
+  for (const event of ['loadstart', 'timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay', 'playing', 'seeked']) {
     video.addEventListener(event, () => {
-      if (event === 'loadedmetadata') {
-        applySeek()
+      if (event === 'loadedmetadata') applySeek()
+      if (event === 'loadstart' || event === 'loadedmetadata') {
         prepareAudio()
         if (audioContext && !audioRecovery) startBrowserAudio()
       }
       if (event === 'canplay' || event === 'playing' || event === 'seeked' || event === 'timeupdate') {
         finishSeek()
       }
-      if (!pendingSeek && (event === 'canplay' || event === 'playing' || event === 'seeked')) stopBuffering()
+      if (!pendingSeek && !playRequest && (event === 'canplay' || event === 'playing' || event === 'seeked')) stopBuffering()
       updateTime()
     }, { signal })
   }
@@ -603,7 +643,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=4')
+      audioModule = import('./browser-audio.js?v=5')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
@@ -647,6 +687,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     audioSelection?.abort()
     audioSelection = new AbortController()
     const selection = AbortSignal.any([signal, audioSelection.signal])
+    if (playRequest) playRequest.waiting = false
     decodedAudio = undefined
     audioRecovery = 'loading'
     audioFailure = undefined
@@ -656,11 +697,13 @@ function bindPlayer(signal, autoplay, reportAudio) {
 
     function useNative(error) {
       if (selection.aborted) return
+      if (playRequest) playRequest.waiting = false
       audioRecovery = 'native'
       audioFailure = error?.message
       if (audioFailure) audioStatus.textContent = 'Browser audio could not start. ' + audioFailure
       syncVolume()
       updateAudio()
+      resumePlayback()
     }
 
     async function chooseAudio() {
@@ -681,7 +724,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
               const trackSignal = AbortSignal.any([selection, attempt.signal])
               audioTrack.value = String(choice.index)
               decodedAudio = module.playDecodedAudio(video, sink, audioContext, trackSignal, {
-                volume: userMuted ? 0 : video.volume,
+                volume: userMuted ? 0 : volumeLevel,
                 started() {
                   audioRecovery = 'active'
                   audioFailure = undefined
@@ -693,9 +736,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
                   attempt.abort()
                   decodedAudio = undefined
                   audioRecovery = 'loading'
+                  if (playRequest) playRequest.waiting = false
                   void useChoices(choices.slice(index + 1), error)
                 }
               })
+              resumePlayback()
               return
             } catch (error) { failure = error }
           }
@@ -706,7 +751,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   }
 
   function updateAudio() {
-    if (userMuted || video.volume === 0 || audioRecovery === 'loading' || audioRecovery === 'active') return
+    if (userMuted || volumeLevel === 0 || audioRecovery === 'loading' || audioRecovery === 'active') return
     const decoded = video.webkitAudioDecodedByteCount
     if (decoded > 0 && !audioReported) {
       audioReported = true
@@ -747,7 +792,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     video.addEventListener(event, () => {
       if (event === 'ended') finishSeek()
       syncPlayButton()
-      if (video.paused && !pendingSeek) stopBuffering()
+      if (video.paused && !pendingSeek && !playRequest) stopBuffering()
     }, { signal })
   }
   video.addEventListener('error', failed, { signal })
@@ -783,15 +828,19 @@ function bindPlayer(signal, autoplay, reportAudio) {
   toggle.addEventListener('click', flipPlayback)
   start.addEventListener('click', flipPlayback)
   function toggleSound() {
-    userMuted = !(userMuted || video.volume === 0)
-    if (!userMuted && video.volume === 0) video.volume = 1
+    userMuted = !(userMuted || volumeLevel === 0)
+    if (!userMuted && volumeLevel === 0) {
+      volumeLevel = lastVolume
+      video.volume = volumeLevel
+    }
     syncVolume()
   }
   function syncVolume() {
-    const muted = userMuted || video.volume === 0
+    const muted = userMuted || volumeLevel === 0
     video.muted = muted || audioRecovery === 'loading' || audioRecovery === 'active'
-    decodedAudio?.setVolume(muted ? 0 : video.volume)
-    volume.value = video.volume
+    decodedAudio?.setVolume(muted ? 0 : volumeLevel)
+    volume.value = volumeLevel
+    volumeValue.textContent = Math.round(volumeLevel * 100) + '%'
     if (muted) audioStatus.hidden = true
     mute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
     mute.innerHTML = icon(muted ? 'muted' : 'volume')
@@ -801,7 +850,9 @@ function bindPlayer(signal, autoplay, reportAudio) {
   video.addEventListener('volumechange', syncVolume, { signal })
   volume.addEventListener('input', () => {
     userMuted = false
-    video.volume = Number(volume.value)
+    volumeLevel = Number(volume.value)
+    if (volumeLevel) lastVolume = volumeLevel
+    video.volume = volumeLevel
     syncVolume()
   }, { signal })
   speed.addEventListener('change', () => { video.playbackRate = Number(speed.value) }, { signal })

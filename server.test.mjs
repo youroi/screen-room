@@ -30,7 +30,7 @@ test('Via reads only bounded byte ranges of the current Circle MKV', async () =>
   assert.equal(calls[0].headers.Range, 'bytes=1-16')
 })
 
-test('Via audio reads the file size from a one-byte range when HEAD is unavailable', async () => {
+test('Via audio falls back to a one-byte size probe for short files', async () => {
   const signal = new AbortController().signal
   let size = 800
   const calls = []
@@ -45,9 +45,34 @@ test('Via audio reads the file size from a one-byte range when HEAD is unavailab
 
   assert.equal(await data.getSize(), 800)
   assert.deepEqual(await data.read(20, 23), Uint8Array.of(7, 7, 7))
-  assert.deepEqual(calls, [[0, 1], [20, 23]])
+  assert.deepEqual(calls, [[0, 128 * 1024], [0, 1], [20, 23]])
   size = 803
   await assert.rejects(data.read(23, 25), /different byte range/)
+})
+
+test('Via audio reads large blocks in bounded parallel batches and preserves byte order', async () => {
+  const chunk = 512 * 1024
+  const size = chunk * 5 + 10
+  let inflight = 0
+  let peak = 0
+  let calls = 0
+  const source = viaSource('http://ftp16.circleftp.net/Pilot.mkv', async (_, start, end) => {
+    calls++
+    assert.ok(end - start <= chunk)
+    peak = Math.max(peak, ++inflight)
+    await new Promise(resolve => setImmediate(resolve))
+    inflight--
+    return {
+      headers: 'Content-Range: bytes ' + start + '-' + (end - 1) + '/' + size,
+      bytes: new Uint8Array(end - start).fill(start / chunk).buffer
+    }
+  }, new AbortController().signal)
+  assert.equal(await source.getSize(), size)
+  assert.deepEqual(await source.read(0, 2), Uint8Array.of(0, 0))
+  assert.equal(calls, 1)
+  const data = await source.read(chunk, size)
+  assert.equal(peak, 4)
+  assert.deepEqual([0, 1, 2, 3, 4].map(index => data[index * chunk]), [1, 2, 3, 4, 5])
 })
 
 test('audio preference keeps Hindi ahead of the original, default and commentary', () => {

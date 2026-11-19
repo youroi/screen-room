@@ -77,7 +77,7 @@ Screen Room SHALL prepare playable Circle MKV audio without waiting for native a
 
 - **WHEN** the viewer seeks in a stream with browser-decoded audio
 - **THEN** the player prepares audio at the requested position while video seeks
-- **AND** resumes the audio against the video's playback clock
+- **AND** resumes video when the selected audio is ready, keeping both on the video's playback clock
 
 ### Requirement: Watch controls
 
