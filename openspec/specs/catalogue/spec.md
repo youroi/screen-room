@@ -18,12 +18,12 @@ Screen Room SHALL show movies, series, search results and title details from an 
 
 Screen Room SHALL look for a matching Circle video when the visitor opens the playback tab.
 
-#### Scenario: A visitor opens Watch from the public site
+#### Scenario: A visitor selects Play from the public site
 
-- **WHEN** the visitor opens Watch on the public site
-- **THEN** the page displays the title or episode and an action to open the playback tab
-- **AND** Circle receives no requests until the visitor opens the playback tab
-- **AND** Browse, Search and title details links in the playback tab return to the public site
+- **WHEN** the visitor selects Play on a title or episode
+- **THEN** the player opens directly in the same tab
+- **AND** Circle receives no requests during Browse, Search or title details
+- **AND** browser Back and the player's Browse, Search and title details links return to the public site
 
 #### Scenario: The requested stream is unavailable
 
