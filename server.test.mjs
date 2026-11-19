@@ -9,6 +9,10 @@ import { createApp } from './server.mjs'
 import { orderAudioTracks, playDecodedAudio, viaSource } from './public/browser-audio.js'
 import { browserCircleStream, findCircleStream } from './public/playback.js'
 
+async function readBytes(source, start, end) {
+  return new Uint8Array(await new Response(source.read(start, end)).arrayBuffer())
+}
+
 test('Via reads only bounded byte ranges of the current Circle MKV', async () => {
   const source = 'http://ftp16.circleftp.net/Pilot%20S01E01.mkv'
   const location = { href: 'http://new.circleftp.net:5000/api/posts?searchTerm=screen-room-browser' }
@@ -44,10 +48,10 @@ test('Via audio falls back to a one-byte size probe for short files', async () =
   }, signal)
 
   assert.equal(await data.getSize(), 800)
-  assert.deepEqual(await data.read(20, 23), Uint8Array.of(7, 7, 7))
+  assert.deepEqual(await readBytes(data, 20, 23), Uint8Array.of(7, 7, 7))
   assert.deepEqual(calls, [[0, 128 * 1024], [0, 1], [20, 23]])
   size = 803
-  await assert.rejects(data.read(23, 25), /different byte range/)
+  await assert.rejects(readBytes(data, 23, 25), /different byte range/)
 })
 
 test('Via audio reads large blocks in bounded parallel batches and preserves byte order', async () => {
@@ -68,11 +72,40 @@ test('Via audio reads large blocks in bounded parallel batches and preserves byt
     }
   }, new AbortController().signal)
   assert.equal(await source.getSize(), size)
-  assert.deepEqual(await source.read(0, 2), Uint8Array.of(0, 0))
+  assert.deepEqual(await readBytes(source, 0, 2), Uint8Array.of(0, 0))
   assert.equal(calls, 1)
-  const data = await source.read(chunk, size)
-  assert.equal(peak, 4)
+  await readBytes(source, 0, chunk)
+  assert.deepEqual(await readBytes(source, chunk - 2, chunk), Uint8Array.of(0, 0))
+  assert.equal(calls, 2)
+  const data = await readBytes(source, chunk, size)
+  assert.equal(peak, 2)
   assert.deepEqual([0, 1, 2, 3, 4].map(index => data[index * chunk]), [1, 2, 3, 4, 5])
+})
+
+test('Via audio gives the parser the first range while later ranges are pending', { timeout: 2000 }, async () => {
+  const chunk = 512 * 1024
+  const size = chunk * 3
+  const stopped = Promise.withResolvers()
+  const source = viaSource('http://ftp16.circleftp.net/Pilot.mkv', async (_, start, end, signal) => {
+    if (start === chunk * 2) {
+      await new Promise((_, reject) => signal.addEventListener('abort', () => {
+        stopped.resolve()
+        reject(signal.reason)
+      }, { once: true }))
+    }
+    return {
+      headers: 'Content-Range: bytes ' + start + '-' + (end - 1) + '/' + size,
+      bytes: new Uint8Array(end - start).fill(start / chunk).buffer
+    }
+  }, new AbortController().signal)
+
+  assert.equal(await source.getSize(), size)
+  const reader = source.read(chunk, size).getReader()
+  const first = await reader.read()
+  assert.equal(first.value.length, chunk)
+  assert.equal(first.value[0], 1)
+  await reader.cancel()
+  await stopped.promise
 })
 
 test('audio preference keeps Hindi ahead of the original, default and commentary', () => {
