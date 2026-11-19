@@ -4,7 +4,7 @@
 
 Circle FTP is the only playback source. Screen Room looks for a matching stream when Watch opens. The published Circle API uses HTTP. The [Circle web player](https://youroi.github.io/screen-room/web-play.html) opens the hosted UI in the Circle API tab using a Chrome bookmark. The browser then makes the playback lookup from the Circle origin and streams over the phone's BDIX connection. Open that tab and run the bookmark again after closing or reloading it.
 
-In Via, install the Screen Room script from **Circle web player** once and open the Circle tab. Play decodes AC-3 and E-AC-3 automatically when native playback is silent and the file server supports byte ranges.
+In Via, install the Screen Room script from **Circle web player** once and open the Circle tab. Screen Room prepares MKV audio on the Watch page and prefers Hindi, then the original or default track. Playback settings let you change the track, speed, and volume. The browser audio decoders cover AAC, AC-3, E-AC-3, DTS, and Dolby TrueHD when the file server supports byte ranges.
 
 ## Development
 

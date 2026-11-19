@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
-import { viaSource } from './public/browser-audio.js'
+import { orderAudioTracks, viaSource } from './public/browser-audio.js'
 import { browserCircleStream, findCircleStream } from './public/playback.js'
 
 test('Via reads only bounded byte ranges of the current Circle MKV', async () => {
@@ -48,6 +48,17 @@ test('Via audio reads the file size from a one-byte range when HEAD is unavailab
   assert.deepEqual(calls, [[0, 1], [20, 23]])
   size = 803
   await assert.rejects(data.read(23, 25), /different byte range/)
+})
+
+test('audio preference keeps Hindi ahead of the original, default and commentary', () => {
+  const tracks = [
+    { language: 'hin', disposition: { commentary: true }, name: 'Commentary' },
+    { language: 'eng', disposition: { default: true }, primary: true },
+    { language: 'kor', disposition: { original: true } },
+    { language: 'und', disposition: {}, name: 'Hindi 5.1' }
+  ]
+  assert.deepEqual(orderAudioTracks(tracks), [tracks[3], tracks[2], tracks[1], tracks[0]])
+  assert.deepEqual(orderAudioTracks(tracks.slice(0, 3)), [tracks[2], tracks[1], tracks[0]])
 })
 
 async function listen(server, context) {

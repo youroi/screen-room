@@ -1,4 +1,4 @@
-import { browse, search, title, imdbId, kinds } from './catalogue.js'
+import { browse, search, title, imdbId, kinds } from './catalogue.js?v=2'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
@@ -27,6 +27,9 @@ const glyphs = {
   volume: '<path d="M4 9v6h4l5 4V5L8 9H4zm12 0a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10"/>',
   muted: '<path d="M4 9v6h4l5 4V5L8 9H4zm12 1 5 5m0-5-5 5"/>',
   full: '<path d="M9 5H5v4m10-4h4v4M5 15v4h4m6 0h4v-4"/>',
+  jumpBack: '<path d="M4 10a8 8 0 1 1 1.8 7.1M4 10V4m0 6h6"/>',
+  jumpAhead: '<path d="M20 10a8 8 0 1 0-1.8 7.1M20 10V4m0 6h-6"/>',
+  settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.4" fill="var(--control-surface)"/><circle cx="15" cy="17" r="2.4" fill="var(--control-surface)"/>',
   expand: '<path d="m9 6 6 6-6 6"/>',
   back: '<path d="m14 6-6 6 6 6"/>'
 }
@@ -206,32 +209,42 @@ function watch(item, episode) {
   const heading = episode ? episode.title : item.title
   routeLabel(heading)
   const next = episode ? allEpisodes[allEpisodes.indexOf(episode) + 1] : null
-  return '<div class="watch-head">' + titleLink(item) + '<h1>' + escape(heading) + '</h1></div>' +
-    '<div class="player" id="player">' +
-    '<video id="video" playsinline preload="metadata"></video>' +
+  const poster = episode?.artwork ? ' poster="' + escape(episode.artwork) + '"' : ''
+  return '<div class="watch-head">' + titleLink(item) + '<h1>' + escape(heading) + '</h1>' +
+    (episode ? '<p class="watch-episode">Season ' + episode.season + ', episode ' + episode.number + '</p>' : '') + '</div>' +
+    '<div class="player" id="player"><div class="video-stage">' +
+    '<video id="video" playsinline preload="metadata"' + poster + '></video>' +
     '<div class="player-state" role="status"><span class="spinner" aria-hidden="true"></span>Finding stream…</div>' +
     '<div class="player-state seek-recovery" hidden><div><h2>Seek stalled</h2><p role="status"></p>' +
     '<div class="seek-actions"><button class="button primary" type="button" data-retry-seek>Retry seek</button>' +
     '<button class="button quiet" type="button" data-resume-seek>Resume playback</button></div></div></div>' +
     '<button class="player-start" type="button" aria-label="Play video" hidden>' + playIcon + '</button>' +
-    '<div class="buffering" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="sr-only">Buffering</span></div>' +
-    '<div class="controls" hidden><input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position" disabled>' +
-    '<div class="controls-bar"><button type="button" id="toggle" aria-label="Play">' + playIcon +
-    '</button><span id="time" class="player-time">0:00 / 0:00</span><span class="spacer"></span>' +
+    '<div class="buffering" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="sr-only">Buffering</span></div></div>' +
+    '<div class="controls" hidden><div class="player-timeline"><input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position" disabled>' +
+    '<span id="time" class="player-time">0:00 / 0:00</span></div>' +
+    '<div class="controls-bar"><button type="button" id="toggle" aria-label="Play">' + playIcon + '</button>' +
+    '<button type="button" class="jump" data-jump="-10" aria-label="Back 10 seconds" disabled>' + icon('jumpBack') + '<span aria-hidden="true">10</span></button>' +
+    '<button type="button" class="jump" data-jump="10" aria-label="Forward 10 seconds" disabled>' + icon('jumpAhead') + '<span aria-hidden="true">10</span></button>' +
+    '<span class="spacer"></span>' +
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
-    '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button>' +
+    '<button type="button" id="settings-toggle" aria-label="Playback settings" title="Playback settings" aria-expanded="false" aria-controls="player-settings">' + icon('settings') + '</button>' +
+    '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button></div>' +
+    '<div class="player-settings-panel" id="player-settings" hidden><label hidden>Audio <select id="audio-track"></select></label>' +
+    '<label>Speed <select id="playback-speed"><option value="0.75">0.75×</option><option value="1" selected>Normal</option>' +
+    '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>' +
+    '<label>Volume <input id="player-volume" type="range" min="0" max="1" step="0.05" value="1"></label>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
     '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
     'Your browser may not support this stream’s audio format.</p>' +
-    '<div class="playback-options" hidden><label hidden>Audio track <select id="audio-track"></select></label>' +
+    '<div class="watch-actions"><div class="playback-options" hidden>' +
     '<button class="button quiet" type="button" data-other-stream hidden>Try another stream</button></div>' +
+    (next ? '<a class="button quiet next-episode" data-route href="' +
+      escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
+      '">Next episode' + icon('expand') + '</a>' : '') + '</div>' +
     '<p id="stream-status" class="muted" role="status" hidden></p>' +
     '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre>' +
     '<button class="button quiet" type="button" data-test-sound>Play test tone</button>' +
-    '<p role="status" data-sound-result></p></details>' +
-    (next ? '<a class="button quiet next-episode" data-route href="' +
-      escape(routeTarget(itemRoute('watch', item) + '?episode=' + encodeURIComponent(next.key))) +
-      '">Next episode' + icon('expand') + '</a>' : '')
+    '<p role="status" data-sound-result></p></details>'
 }
 
 function bindPlayer(signal, autoplay, reportAudio) {
@@ -243,6 +256,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const seek = main.querySelector('#seek')
   const time = main.querySelector('#time')
   const mute = main.querySelector('#mute')
+  const volume = main.querySelector('#player-volume')
+  const speed = main.querySelector('#playback-speed')
+  const settings = main.querySelector('#settings-toggle')
+  const settingsPanel = main.querySelector('#player-settings')
+  const jumps = player.querySelectorAll('[data-jump]')
   const error = main.querySelector('#video-error')
   const audioStatus = main.querySelector('#audio-status')
   const audioTrack = main.querySelector('#audio-track')
@@ -258,7 +276,13 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const matroska = audioSource && mediaType(audioSource) === 'video/x-matroska'
   let audioContext
   let audioRecovery
-  let stopBrowserAudio
+  let audioModule
+  let audioPromise
+  let audioChoices
+  let audioSelection
+  let decodedAudio
+  let userMuted = video.muted
+  let audioFailure
   let bufferTimer
   let seekTimer
   let scrubbing = false
@@ -285,10 +309,26 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (!pendingSeek && !stalledSeek && !video.seeking && video.readyState >= 2) lastPlayed = video.currentTime
     seek.disabled = Boolean(stalledSeek) || !duration ||
       (!pendingSeek && (!seekable.length || seekable.end(seekable.length - 1) === 0))
+    for (const jump of jumps) jump.disabled = seek.disabled
     const position = pendingSeek?.target ?? stalledSeek?.target ?? video.currentTime
     if (!scrubbing) seek.value = duration ? position / duration * 100 : 0
     const preview = scrubbing ? Number(seek.value) * duration / 100 : position
     time.textContent = formatTime(preview) + ' / ' + formatTime(duration)
+    seek.setAttribute('aria-valuetext', formatTime(preview) + ' of ' + formatTime(duration))
+    seek.style.setProperty('--played', seek.value + '%')
+    let start = 0
+    let end = 0
+    const buffered = video.buffered
+    for (let index = 0; index < buffered.length; index++) {
+      if (buffered.start(index) > position) break
+      if (buffered.end(index) >= position) {
+        start = buffered.start(index)
+        end = buffered.end(index)
+        break
+      }
+    }
+    seek.style.setProperty('--buffer-start', (duration ? start / duration * 100 : 0) + '%')
+    seek.style.setProperty('--buffer-end', (duration ? end / duration * 100 : 0) + '%')
   }
 
   function formatRanges(ranges) {
@@ -303,7 +343,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
       main.querySelector('.watch-head h1').textContent,
       'Source: ' + url.origin + (mediaType(url) ? ' (' + mediaType(url) + ')' : ''),
       'Current position: ' + formatTime(video.currentTime) + ' / ' + formatTime(duration),
-      'Audio: ' + (video.muted ? 'muted' : 'unmuted') + ', volume ' + Math.round(video.volume * 100) + '%',
+      'Audio: ' + (userMuted ? 'muted' : 'unmuted') + ', volume ' + Math.round(video.volume * 100) + '%',
+      'Audio decoder: ' + (audioRecovery ?? 'native') + (audioFailure ? ' (' + audioFailure + ')' : ''),
       'Decoded bytes: audio ' + (video.webkitAudioDecodedByteCount ?? 'unavailable') +
         ', video ' + (video.webkitVideoDecodedByteCount ?? 'unavailable'),
       'Audio tracks: ' + (tracks ? Array.from(tracks).filter(track => track.enabled).length +
@@ -403,15 +444,15 @@ function bindPlayer(signal, autoplay, reportAudio) {
   }
 
   function play() {
-    if (matroska && video.webkitAudioDecodedByteCount === 0 && !audioContext && typeof AudioContext === 'function') {
-      try {
-        audioContext = new AudioContext()
-        void audioContext.resume().catch(() => {})
-      } catch {}
-    }
+    if (matroska) startBrowserAudio()
     video.play().catch(error => {
       if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') failed()
     })
+  }
+
+  function checkRange() {
+    rangeCheck ??= probeByteRange(source, signal)
+    return rangeCheck
   }
 
   function finishSeek() {
@@ -430,6 +471,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (!pendingSeek || pendingSeek.checkingRange || pendingSeek.applied || video.readyState < 1) return
     pendingSeek.applied = true
     pendingSeek.target = Math.min(pendingSeek.target, video.duration)
+    decodedAudio?.prime(pendingSeek.target)
     video.currentTime = pendingSeek.target
     if (pendingSeek.play) play()
     finishSeek()
@@ -457,6 +499,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     pendingSeek = undefined
     stopBuffering()
     showDebug(attempt, reason)
+    decodedAudio?.reset()
     video.pause()
     video.removeAttribute('src')
     video.load()
@@ -480,17 +523,16 @@ function bindPlayer(signal, autoplay, reportAudio) {
     const inBuffer = Array.from({ length: buffered.length }, (_, index) =>
       target >= buffered.start(index) && target < buffered.end(index)).some(Boolean)
     if (!inBuffer) {
-      if (!rangeProbe) {
+      if (!rangeProbe && !decodedAudio) {
         clearTimeout(seekTimer)
         attempt.checkingRange = true
         pendingSeek = attempt
         showBuffering()
         updateTime()
-        rangeCheck ??= probeByteRange(source, signal)
-        rangeProbe = await rangeCheck
+        rangeProbe = await checkRange()
         if (signal.aborted || pendingSeek !== attempt) return
       }
-      if (rangeProbe.ignored) {
+      if (rangeProbe?.ignored) {
         showDebug(attempt, 'server ignored the requested byte range')
         pendingSeek = undefined
         stopBuffering()
@@ -527,7 +569,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
 
   for (const event of ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'canplay', 'playing', 'seeked']) {
     video.addEventListener(event, () => {
-      if (event === 'loadedmetadata') applySeek()
+      if (event === 'loadedmetadata') {
+        applySeek()
+        prepareAudio()
+        if (audioContext && !audioRecovery) startBrowserAudio()
+      }
       if (event === 'canplay' || event === 'playing' || event === 'seeked' || event === 'timeupdate') {
         finishSeek()
       }
@@ -535,42 +581,133 @@ function bindPlayer(signal, autoplay, reportAudio) {
       updateTime()
     }, { signal })
   }
-  function audioRecoveryFailed(error) {
-    if (signal.aborted) return
-    audioRecovery = 'failed'
-    if (!video.webkitAudioDecodedByteCount) {
-      audioStatus.textContent = 'Browser audio could not start. ' + error.message
-      audioStatus.hidden = false
-    }
+  function showAudioOptions(tracks, id, native = false) {
+    const names = new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' })
+    const options = tracks.map(({ name, language, index, disposition }) => {
+      const lang = language !== 'und' && /^[a-z]{2,3}(?:-[a-z0-9]+)*$/i.test(language) ? names.of(language) : ''
+      const label = name || lang || 'Track ' + (index + 1)
+      return new Option(label + (disposition?.original ? ' (Original)' : ''), index, false, index === id)
+    })
+    audioTrack.replaceChildren(...options)
+    audioTrack.parentElement.hidden = native ? options.length < 2 : !options.length
   }
 
-  async function recoverAudio() {
-    audioRecovery = 'loading'
+  function prepareAudio() {
+    if (!matroska || typeof AudioContext !== 'function') return
+    if (!audioModule) {
+      audioModule = import('./browser-audio.js?v=4')
+      void audioModule.catch(() => {})
+    }
+    if (!video.currentSrc) return
+    if (!audioPromise) {
+      audioPromise = audioModule.then(async module => {
+        const engine = await module.openBrowserAudio(source, checkRange, signal)
+        signal.throwIfAborted()
+        audioChoices = engine.choices
+        showAudioOptions(audioChoices, audioChoices[0]?.index)
+        const warmDecoders = new Map()
+        void primeStart()
+        return { module, engine, warmDecoders }
+
+        async function primeStart() {
+          for (const choice of audioChoices) {
+            if (signal.aborted || audioSelection) return
+            const decoder = engine.decoder(choice)
+            warmDecoders.set(choice, decoder)
+            try {
+              const sink = await decoder
+              if (!sink) continue
+              if (!audioSelection) module.warmAudioStart(sink, signal)
+              return
+            } catch {}
+          }
+        }
+      })
+      void audioPromise.catch(() => {})
+    }
+    return audioPromise
+  }
+
+  function startBrowserAudio(preferredIndex) {
+    if (!matroska || typeof AudioContext !== 'function' || (audioRecovery && preferredIndex === undefined)) return
     try {
-      const { enableBrowserAudio } = await import('./browser-audio.js?v=3')
-      signal.throwIfAborted()
-      stopBrowserAudio = await enableBrowserAudio(video, source, audioContext, signal, audioRecoveryFailed)
-      if (audioRecovery !== 'failed') audioRecovery = stopBrowserAudio ? 'active' : 'native'
-      if (audioRecovery === 'active') audioStatus.hidden = true
-    } catch (error) {
-      audioRecoveryFailed(error)
+      audioContext ??= new AudioContext()
+      void audioContext.resume().catch(() => {})
+    } catch { return }
+    const prepared = prepareAudio()
+    if (!prepared) return
+    audioSelection?.abort()
+    audioSelection = new AbortController()
+    const selection = AbortSignal.any([signal, audioSelection.signal])
+    decodedAudio = undefined
+    audioRecovery = 'loading'
+    audioFailure = undefined
+    audioStatus.hidden = true
+    syncVolume()
+    void chooseAudio()
+
+    function useNative(error) {
+      if (selection.aborted) return
+      audioRecovery = 'native'
+      audioFailure = error?.message
+      if (audioFailure) audioStatus.textContent = 'Browser audio could not start. ' + audioFailure
+      syncVolume()
+      updateAudio()
+    }
+
+    async function chooseAudio() {
+      try {
+        const { module, engine, warmDecoders } = await prepared
+        const selected = audioChoices.find(choice => choice.index === preferredIndex)
+        const order = selected ? [selected, ...audioChoices.filter(choice => choice !== selected)] : audioChoices
+        await useChoices(order)
+
+        async function useChoices(choices, failure) {
+          for (const [index, choice] of choices.entries()) {
+            if (selection.aborted) return
+            try {
+              const sink = await (warmDecoders.get(choice) ?? engine.decoder(choice))
+              selection.throwIfAborted()
+              if (!sink) continue
+              const attempt = new AbortController()
+              const trackSignal = AbortSignal.any([selection, attempt.signal])
+              audioTrack.value = String(choice.index)
+              decodedAudio = module.playDecodedAudio(video, sink, audioContext, trackSignal, {
+                volume: userMuted ? 0 : video.volume,
+                started() {
+                  audioRecovery = 'active'
+                  audioFailure = undefined
+                  audioStatus.hidden = true
+                  if (!audioReported) reportAudio?.('decoded')
+                  audioReported = true
+                },
+                failed(error) {
+                  attempt.abort()
+                  decodedAudio = undefined
+                  audioRecovery = 'loading'
+                  void useChoices(choices.slice(index + 1), error)
+                }
+              })
+              return
+            } catch (error) { failure = error }
+          }
+          useNative(failure ?? new Error('No supported audio tracks were available.'))
+        }
+      } catch (error) { useNative(error) }
     }
   }
 
   function updateAudio() {
-    if (video.muted || video.volume === 0) return
+    if (userMuted || video.volume === 0 || audioRecovery === 'loading' || audioRecovery === 'active') return
     const decoded = video.webkitAudioDecodedByteCount
     if (decoded > 0 && !audioReported) {
       audioReported = true
-      stopBrowserAudio?.()
       reportAudio?.('decoded')
     }
     const played = video.played
     if (!played.length || video.paused || video.seeking || pendingSeek || stalledSeek ||
         !video.webkitVideoDecodedByteCount) return
     const span = played.end(played.length - 1) - played.start(played.length - 1)
-    if (decoded === 0 && span >= 1 && audioContext && !audioRecovery) void recoverAudio()
-    if (audioRecovery === 'loading' || audioRecovery === 'active') return
     audioStatus.hidden = decoded !== 0 || span < 2
     if (decoded === 0 && span >= 4 && video.currentTime < 7) {
       reportAudio?.('silent')
@@ -580,19 +717,21 @@ function bindPlayer(signal, autoplay, reportAudio) {
   video.addEventListener('timeupdate', updateAudio, { signal })
   if (video.audioTracks) {
     function updateAudioTracks() {
+      if (audioChoices) return
       const tracks = Array.from(video.audioTracks)
-      audioTrack.replaceChildren(...tracks.map((track, index) => new Option(
-        track.label || track.language || 'Track ' + (index + 1), index, false, track.enabled
-      )))
-      audioTrack.parentElement.hidden = tracks.length < 2
-      if (tracks.length > 1) audioTrack.closest('.playback-options').hidden = false
+      const hindi = tracks.findIndex(track => /^(?:hi|hin)(?:-|$)/i.test(track.language) || /\bHindi\b/i.test(track.label))
+      if (hindi >= 0) tracks.forEach((track, index) => { track.enabled = index === hindi })
+      showAudioOptions(tracks.map((track, index) => ({
+        index, name: track.label, language: track.language
+      })), tracks.findIndex(track => track.enabled), true)
     }
     video.addEventListener('loadedmetadata', updateAudioTracks, { signal })
     video.audioTracks.addEventListener('addtrack', updateAudioTracks, { signal })
-    audioTrack.addEventListener('change', () => {
-      Array.from(video.audioTracks).forEach((track, index) => { track.enabled = index === Number(audioTrack.value) })
-    }, { signal })
   }
+  audioTrack.addEventListener('change', () => {
+    if (audioChoices) startBrowserAudio(Number(audioTrack.value))
+    else Array.from(video.audioTracks ?? []).forEach((track, index) => { track.enabled = index === Number(audioTrack.value) })
+  }, { signal })
   video.addEventListener('waiting', () => {
     if (pendingSeek || (!video.paused && !stalledSeek)) showBuffering()
   }, { signal })
@@ -621,6 +760,9 @@ function bindPlayer(signal, autoplay, reportAudio) {
     scrubbing = false
     seekTo(target)
   })
+  for (const jump of jumps) {
+    jump.addEventListener('click', () => seekTo((pendingSeek?.target ?? video.currentTime) + Number(jump.dataset.jump)), { signal })
+  }
   retry.addEventListener('click', () => {
     if (stalledSeek) startSeek(stalledSeek, true)
   })
@@ -633,20 +775,47 @@ function bindPlayer(signal, autoplay, reportAudio) {
   toggle.addEventListener('click', flipPlayback)
   start.addEventListener('click', flipPlayback)
   function toggleSound() {
-    const muted = video.muted || video.volume === 0
-    video.muted = !muted
-    if (muted && video.volume === 0) video.volume = 1
+    userMuted = !(userMuted || video.volume === 0)
+    if (!userMuted && video.volume === 0) video.volume = 1
+    syncVolume()
   }
-  mute.addEventListener('click', toggleSound)
-  video.addEventListener('volumechange', () => {
-    const muted = video.muted || video.volume === 0
+  function syncVolume() {
+    const muted = userMuted || video.volume === 0
+    video.muted = muted || audioRecovery === 'loading' || audioRecovery === 'active'
+    decodedAudio?.setVolume(muted ? 0 : video.volume)
+    volume.value = video.volume
     if (muted) audioStatus.hidden = true
     mute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
     mute.innerHTML = icon(muted ? 'muted' : 'volume')
     if (debug.open) renderDebug()
+  }
+  mute.addEventListener('click', toggleSound, { signal })
+  video.addEventListener('volumechange', syncVolume, { signal })
+  volume.addEventListener('input', () => {
+    userMuted = false
+    video.volume = Number(volume.value)
+    syncVolume()
   }, { signal })
-  main.querySelector('#fullscreen').addEventListener('click', toggleFullscreen)
+  speed.addEventListener('change', () => { video.playbackRate = Number(speed.value) }, { signal })
+  function showSettings(open) {
+    settingsPanel.hidden = !open
+    settings.setAttribute('aria-expanded', String(open))
+  }
+  settings.addEventListener('click', () => showSettings(settingsPanel.hidden), { signal })
+  document.addEventListener('pointerdown', event => {
+    if (!settingsPanel.hidden && !settings.contains(event.target) && !settingsPanel.contains(event.target)) showSettings(false)
+  }, { signal })
+  const fullscreen = main.querySelector('#fullscreen')
+  fullscreen.addEventListener('click', toggleFullscreen, { signal })
+  document.addEventListener('fullscreenchange', () => {
+    fullscreen.setAttribute('aria-label', document.fullscreenElement === player ? 'Exit fullscreen' : 'Fullscreen')
+  }, { signal })
   document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !settingsPanel.hidden) {
+      showSettings(false)
+      settings.focus()
+      return
+    }
     if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey ||
         event.target.closest?.('a, input, button, select, summary, textarea, [contenteditable]')) return
     if (event.key === ' ' || event.key.toLowerCase() === 'k') {
@@ -658,6 +827,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     } else if (event.key.toLowerCase() === 'm' && !event.repeat) toggleSound()
     else if (event.key.toLowerCase() === 'f') toggleFullscreen()
   }, { signal })
+  prepareAudio()
   if (autoplay) play()
 }
 
