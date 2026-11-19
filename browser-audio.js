@@ -1,5 +1,7 @@
 const audioPackage = 'https://cdn.jsdelivr.net/npm/'
 const maxRangeSize = 512 * 1024
+const readsPerBatch = 4
+const headerSize = 128 * 1024
 const decoderLoads = new Map()
 const warmStarts = new WeakMap()
 
@@ -68,8 +70,9 @@ async function registerAacDecoder({ registerDecoder, CustomAudioDecoder, AudioSa
 
 export async function openBrowserAudio(source, checkRange, signal) {
   const readMedia = window.screenRoomReadMedia
+  const via = readMedia && viaSource(source, readMedia, signal)
   const [bunny, range] = await Promise.all([
-    import(audioPackage + 'mediabunny@1.66.0/+esm'), readMedia ? null : checkRange()
+    import(audioPackage + 'mediabunny@1.66.0/+esm'), via ? via.getSize().then(() => null) : checkRange()
   ])
   signal.throwIfAborted()
   if (!readMedia && !(range.status === 206 && range.range)) {
@@ -77,7 +80,7 @@ export async function openBrowserAudio(source, checkRange, signal) {
     throw new Error('Install the Screen Room script from Circle web player setup in Via.')
   }
   const { Input, MATROSKA, UrlSource, CustomSource, AudioBufferSink } = bunny
-  const data = readMedia ? new CustomSource(viaSource(source, readMedia, signal)) :
+  const data = via ? new CustomSource(via) :
     new UrlSource(source, {
       requestInit: { credentials: 'omit', redirect: 'error' }, maxCacheSize: 16 * 1024 * 1024
     })
@@ -108,6 +111,7 @@ export async function openBrowserAudio(source, checkRange, signal) {
 
 export function viaSource(source, readMedia, signal) {
   let size
+  let header
 
   async function readRange(start, end) {
     const { headers, bytes } = await readMedia(source, start, end, signal)
@@ -124,15 +128,29 @@ export function viaSource(source, readMedia, signal) {
   return {
     prefetchProfile: 'fileSystem', maxCacheSize: 8 * 1024 * 1024,
     async getSize() {
-      // A successful range provides the file size even when the server rejects HEAD.
-      await readRange(0, 1)
+      if (size === undefined) {
+        // The first range provides both the file size and the MKV headers.
+        try {
+          header = await readRange(0, headerSize)
+        } catch (error) {
+          signal.throwIfAborted()
+          if (!/incomplete byte range|different byte range/.test(error.message)) throw error
+          await readRange(0, 1)
+        }
+      }
       return size
     },
     async read(start, end) {
       const data = new Uint8Array(end - start)
-      for (let offset = start; offset < end; offset += maxRangeSize) {
-        const limit = Math.min(offset + maxRangeSize, end)
-        data.set(await readRange(offset, limit), offset - start)
+      const cachedEnd = Math.min(header?.length ?? 0, end)
+      if (start < cachedEnd) data.set(header.subarray(start, cachedEnd))
+      for (let base = Math.max(start, cachedEnd); base < end; base += readsPerBatch * maxRangeSize) {
+        const count = Math.min(readsPerBatch, Math.ceil((end - base) / maxRangeSize))
+        await Promise.all(Array.from({ length: count }, async (_, index) => {
+          const offset = base + index * maxRangeSize
+          const limit = Math.min(offset + maxRangeSize, end)
+          data.set(await readRange(offset, limit), offset - start)
+        }))
       }
       return data
     }
@@ -140,7 +158,7 @@ export function viaSource(source, readMedia, signal) {
 }
 
 function readBuffers(sink, position) {
-  const buffers = sink.buffers(Math.max(0, position - 0.06))
+  const buffers = sink.buffers(position)
   const first = buffers.next()
   void first.catch(() => {})
   return { position, buffers, first }
@@ -183,6 +201,20 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
   function prime(position) {
     reset()
     prepared = readBuffers(sink, position)
+  }
+
+  async function ready(position) {
+    if (!prepared || Math.abs(prepared.position - position) > 0.06) prime(position)
+    const job = prepared
+    try {
+      const first = await job.first
+      if (prepared !== job || signal.aborted) return false
+      if (!first.done || position >= video.duration - 1) return true
+      failed(new Error('No audio samples at this position.'))
+    } catch (error) {
+      if (prepared === job && !signal.aborted) failed(error)
+    }
+    return false
   }
 
   async function start() {
@@ -234,9 +266,12 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     reset()
     gain.disconnect()
   }, { once: true })
-  const setVolume = value => { gain.gain.value = value }
-  setVolume(volume)
+  gain.gain.value = volume
+  function setVolume(value) {
+    gain.gain.cancelScheduledValues(context.currentTime)
+    gain.gain.setTargetAtTime(value, context.currentTime, 0.012)
+  }
   if (!prepared) prime(video.currentTime)
   void start()
-  return { prime, reset, setVolume }
+  return { prime, ready, reset, setVolume }
 }
