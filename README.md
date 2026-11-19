@@ -17,11 +17,13 @@ npm test
 
 ## Catalogue refresh
 
-The `Publish catalogue` GitHub Actions workflow refreshes Trending, Popular, and Latest at 10:23 UTC daily. It reads the API Read Access Token from the `TMDB_READ_TOKEN` Actions secret. Run the workflow with its refresh option enabled for an immediate update. A failed refresh leaves the previous validated snapshot in place. A code-only deployment copies that snapshot from `gh-pages` into the Pages artifact.
+The `Publish catalogue` GitHub Actions workflow refreshes the hero and six Home rows at 10:23 UTC daily. Set the API Read Access Token as the `TMDB_READ_TOKEN` Actions secret. Run the workflow with its refresh option enabled for an immediate update. A failed refresh retains the last validated snapshot from `gh-pages`.
 
-Movies qualify on a regular theatrical release or digital debut, and series qualify when a full episode has aired. Latest Releases uses the newest qualifying debut in Bangladesh, India, or the United States, in that market preference order. A digital debut in Latest also needs a regional JustWatch provider listing. The Top Rated row uses the [IMDb chart snapshot from 15 November 2026](https://movies.rankhistory.fyi/250/history/2026/11/15) in chart order.
+Popular uses global, Indian, Korean and Japanese feeds. Trending keeps the original weekly feed order after release checks. Latest Releases requires a digital debut and a streaming, rental or purchase listing in the same market. The market preference is Bangladesh, India, Korea, Japan, then the United States.
 
-Edit `public/hindi-dubs.js` to add verified dubs. Use an official movie source or a source for each confirmed season. The record affects catalogue order and has no bearing on a file's audio tracks.
+After checking real Circle playback in Via, record the title's IMDb ID in `scripts/featured-playback.json` with `date` (UTC, YYYY-MM-DD), `audio: true`, `seek: true` and the tested `season` for a series. Only checks within the past 14 days get priority. The refresh job and Home never connect to Circle.
+
+Edit `public/hindi-dubs.js` to add verified dubs. Use an official movie source or a source for each confirmed season. A series gets a boost when its latest aired season is confirmed. These records rank titles independently of the audio tracks in a Circle file.
 
 The seek regression also runs in Chromium. Generate a local test clip with
 `ffmpeg -f lavfi -i testsrc2=size=640x360:rate=25 -t 18 -c:v libx264 -movflags +faststart /tmp/screen-room-clip.mp4`,

@@ -67,41 +67,23 @@ export async function browse(options) {
   return { items: items.map(meta => normalize(meta, options.kind)).filter(Boolean), hasNext: source.length > pageSize }
 }
 
-export async function popularCandidates(kind, signal) {
-  const source = await list(kind, { page: 1, signal })
-  return source.map(meta => normalize(meta, kind)).filter(Boolean)
-}
-
 function picks(kind, entries) {
   return entries.map(([id, title]) => ({
     id, kind, title, artwork: 'https://images.metahub.space/poster/small/' + id + '/img'
   }))
 }
 
-export const featured = picks('movie', [
-  ['tt0118694', 'In the Mood for Love'],
-  ['tt27503384', 'Perfect Days'],
-  ['tt13238346', 'Past Lives'],
-  ['tt0064116', 'Once Upon a Time in the West']
-])
+export const fallbackFeatured = [
+  ...picks('movie', [['tt37287335', 'Obsession']]),
+  ...picks('series', [['tt31510819', 'MobLand']]),
+  ...picks('movie', [['tt14205554', 'KPop Demon Hunters'], ['tt22084616', 'Spider-Man: Brand New Day']]),
+  ...picks('series', [['tt27995113', 'Black Doves']]),
+  ...picks('movie', [['tt32820897', 'Demon Slayer: Infinity Castle']])
+]
 
-export const collections = [
-  {
-    key: 'top-rated',
-    label: 'Top Rated Movies',
-    // IMDb Top 250 order recorded on 15 November 2026.
-    items: picks('movie', [
-      ['tt0111161', 'The Shawshank Redemption'], ['tt0068646', 'The Godfather'],
-      ['tt0468569', 'The Dark Knight'], ['tt0071562', 'The Godfather Part II'],
-      ['tt0167260', 'The Lord of the Rings: The Return of the King'], ['tt0050083', '12 Angry Men'],
-      ['tt0108052', "Schindler's List"], ['tt0120737', 'The Lord of the Rings: The Fellowship of the Ring'],
-      ['tt0110912', 'Pulp Fiction'], ['tt0167261', 'The Lord of the Rings: The Two Towers'],
-      ['tt0060196', 'The Good, the Bad and the Ugly'], ['tt0109830', 'Forrest Gump']
-    ])
-  },
+const fallbackCollections = [
   {
     key: 'animation',
-    label: 'Animation',
     items: [
       ...picks('movie', [
         ['tt0245429', 'Spirited Away'], ['tt4633694', 'Spider-Man: Into the Spider-Verse'],
@@ -117,7 +99,6 @@ export const collections = [
   },
   {
     key: 'k-dramas',
-    label: 'K-Dramas',
     items: picks('series', [
       ['tt10850932', 'Crash Landing on You'], ['tt24640580', 'Moving'],
       ['tt20869502', 'Extraordinary Attorney Woo'], ['tt6611916', 'Kingdom'],
@@ -129,28 +110,45 @@ export const collections = [
   }
 ]
 
+export const collections = [
+  { key: 'movie', label: 'Popular Movies', field: 'popularMovies' },
+  { key: 'series', label: 'Popular Series', field: 'popularSeries' },
+  { key: 'trending', label: 'Trending This Week', field: 'trending' },
+  { key: 'latest', label: 'Latest Releases', field: 'latest' },
+  { key: 'animation', label: 'Animation', field: 'animation' },
+  { key: 'k-dramas', label: 'K-Dramas', field: 'kDramas' }
+]
+
+function snapshotItems(items, limit) {
+  return items.flatMap(item => {
+    const title = string(item?.title)
+    const artwork = image(item?.artwork)
+    return imdbId.test(item?.id) && kinds.has(item.kind) && title && artwork
+      ? [{ id: item.id, kind: item.kind, title, artwork }] : []
+  }).slice(0, limit)
+}
+
 export async function refreshedCollections(signal) {
   const response = await fetch(new URL('./catalogue-snapshot.json', import.meta.url), { signal, credentials: 'omit' })
   if (!response.ok) throw new Error('The catalogue snapshot is unavailable.')
   const data = await response.json()
-  if (data?.version !== 3 || ![data.popularMovies, data.popularSeries, data.trending, data.latest].every(Array.isArray)) {
+  const legacy = data?.version === 3
+  const required = legacy ? collections.slice(0, 4) : collections
+  if ((!legacy && data?.version !== 4) || !required.every(row => Array.isArray(data[row.field]))) {
     throw new Error('Invalid catalogue snapshot.')
   }
-  return [
-    { key: 'movie', label: 'Popular Movies', items: data.popularMovies },
-    { key: 'series', label: 'Popular Series', items: data.popularSeries },
-    { key: 'trending', label: 'Trending This Week', items: data.trending },
-    { key: 'latest', label: 'Latest Releases', items: data.latest }
-  ].map(row => ({
-    ...row,
-    items: row.items.flatMap(item => {
-      const title = string(item?.title)
-      const artwork = image(item?.artwork)
-      return imdbId.test(item?.id) && kinds.has(item.kind) && title && artwork
-        ? [{ id: item.id, kind: item.kind, title, artwork }] : []
+
+  const featured = Array.isArray(data.featured) ? snapshotItems(data.featured, 6) : []
+  return {
+    featured: featured.length === 6 ? featured : fallbackFeatured,
+    rows: collections.map(({ key, field }) => {
+      const items = data[field] ?? fallbackCollections.find(row => row.key === key)?.items ?? []
+      return [key, snapshotItems(key === 'latest' ? items.filter(item => item?.releaseType === 'digital') : items, 30)]
     })
-  })).filter(row => row.items.length)
+  }
 }
+
+export const offlineCollections = fallbackCollections.map(({ key, items }) => [key, items])
 
 export async function search(query, signal) {
   const results = await Promise.allSettled([...kinds].map(async kind =>

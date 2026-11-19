@@ -41,25 +41,35 @@ jobs:
           REQUESTED: ${{ inputs.refresh }}
         run: |
           if [ "$EVENT" = schedule ] || [ "$REQUESTED" = true ] ||
-             ! jq -e '.version == 3' .published/catalogue-snapshot.json > /dev/null 2>&1; then
+             ! jq -e '.version == 4' .published/catalogue-snapshot.json > /dev/null 2>&1; then
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
       - if: steps.refresh.outputs.needed == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Refresh and retain the validated snapshot
+      - name: Refresh the catalogue
+        id: generate
         if: steps.refresh.outputs.needed == 'true'
+        continue-on-error: true
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+        run: node scripts/refresh-catalogue.mjs .published/catalogue-snapshot.json
+      - name: Save the validated snapshot
+        if: steps.generate.outcome == 'success'
         run: |
-          node scripts/refresh-catalogue.mjs .published/catalogue-snapshot.json
           git -C .published add catalogue-snapshot.json
           git -C .published -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh catalogue snapshot'
           git -C .published push origin HEAD:gh-pages
       - name: Include the last validated snapshot
+        env:
+          REFRESH_OUTCOME: ${{ steps.generate.outcome }}
         run: |
+          if [ "$REFRESH_OUTCOME" = failure ]; then
+            echo "::warning::Catalogue refresh failed. Publishing with the last valid snapshot."
+            echo "Catalogue refresh failed. Pages kept the last validated snapshot." >> "$GITHUB_STEP_SUMMARY"
+          fi
           if test -f .published/catalogue-snapshot.json; then
             cp .published/catalogue-snapshot.json public/catalogue-snapshot.json
           fi

@@ -96,7 +96,13 @@ The Watch player SHALL expose seeking, ten-second jumps, speed, volume, audio tr
 
 ### Requirement: Featured catalogue gallery
 
-The Home page SHALL show featured titles as original portrait artwork paired with the title in a bottom-aligned editorial layout.
+The Home page SHALL show six distinct released featured titles spanning movies, series and animation as original portrait artwork paired with the title in a bottom-aligned editorial layout.
+
+#### Scenario: The catalogue refreshes featured titles
+
+- **WHEN** the refresh selects featured titles
+- **THEN** it prioritizes recent actual audio and seek verification, recency, popularity, and usable artwork
+- **AND** it expires old playback verification and makes no Circle request on Home
 
 #### Scenario: A visitor changes the highlighted title
 
@@ -112,7 +118,7 @@ The Home page SHALL show featured titles as original portrait artwork paired wit
 
 ### Requirement: Catalogue discovery and navigation
 
-Home SHALL show Popular Movies, Popular Series, Top Rated Movies, Animation, and K-Dramas as manually browsable rows.
+Home SHALL show Popular Movies, Popular Series, Trending This Week, Latest Releases, Animation, and K-Dramas as manually browsable rows with up to 30 eligible titles each.
 
 #### Scenario: A visitor returns from details
 
@@ -136,14 +142,14 @@ Search SHALL present matching movies and series as the visitor types and keep a 
 
 ### Requirement: Weekly trends and regional digital releases
 
-Home SHALL display released weekly TMDB trends and recent regional public movie releases from a validated snapshot.
+Home SHALL display released weekly TMDB trends and recent regional digital movie releases from a validated snapshot.
 
 #### Scenario: A visitor browses the new rows
 
 - **WHEN** a valid snapshot is available
 - **THEN** Trending preserves weekly feed order after removing titles without a regular public release
-- **AND** Latest Releases sorts movies by confirmed regional regular theatrical or digital release date
-- **AND** a digital entry in Latest requires a streaming, rental, or purchase listing in the same market
+- **AND** Latest Releases sorts movies by confirmed regional digital release date
+- **AND** an entry in Latest requires a streaming, rental, or purchase listing in the same market
 - **AND** upcoming titles, premieres, and previews do not qualify
 - **AND** the two rows preserve their source orders when a title qualifies in both
 
@@ -158,14 +164,13 @@ The existing popular and genre rows SHALL prioritise officially confirmed Hindi 
 
 #### Scenario: A title has a confirmed dub
 
-- **WHEN** a title's movie record or a season records an official Hindi dub
+- **WHEN** a title's movie record or its featured season records an official Hindi dub
 - **THEN** the title moves ahead of unconfirmed titles within its eligible row
 - **AND** the priority implies no Circle source or audio availability
-- **AND** the Top Rated row retains the chart's relative order
 
 ### Requirement: Released popular titles
 
-Popular Movies and Popular Series SHALL come from the release-checked snapshot.
+Popular Movies and Popular Series SHALL come from the release-checked snapshot with global, Indian, Korean and Japanese candidates selected for relevance.
 
 #### Scenario: The popularity feed contains an unreleased title
 

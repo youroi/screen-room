@@ -1,5 +1,4 @@
-import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=7'
-import { prioritizeHindi } from './hindi-dubs.js?v=1'
+import { browse, search, title, fallbackFeatured, collections, offlineCollections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=8'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
@@ -86,8 +85,13 @@ function metadata(item, extended = false) {
 function artwork(item, { eager = false, priority = false, sizes = '(min-width: 671px) 164px, 108px' } = {}) {
   const fallback = '<span class="poster-fallback" aria-hidden="true">' + escape(item.title) + '</span>'
   if (!item.artwork) return fallback
-  const attrs = ' alt="" referrerpolicy="no-referrer"' + (eager ? '' : ' loading="lazy"') +
+  const attrs = ' width="342" height="513" alt="" referrerpolicy="no-referrer"' + (eager ? '' : ' loading="lazy"') +
     (priority ? ' fetchpriority="high"' : '') + ' decoding="async"'
+  if (item.artwork.startsWith('https://image.tmdb.org/t/p/w342/')) {
+    const posterUrl = size => escape(item.artwork.replace('/w342/', '/w' + size + '/'))
+    return fallback + '<img src="' + posterUrl(342) + '" srcset="' + posterUrl(185) + ' 185w, ' +
+      posterUrl(342) + ' 342w, ' + posterUrl(500) + ' 500w" sizes="' + sizes + '"' + attrs + '>'
+  }
   if (!/^https:\/\/images\.metahub\.space\/poster\/small\//.test(item.artwork)) {
     return fallback + '<img src="' + escape(item.artwork) + '"' + attrs + '>'
   }
@@ -123,11 +127,11 @@ function card(item, { eager = false, showKind = false, shelf = false } = {}) {
 
 function featureContent(item, priority = false) {
   return '<div class="poster feature-poster">' + artwork(item, {
-    eager: true, priority, sizes: '(min-width: 900px) 224px, 144px'
+    eager: true, priority, sizes: '(min-width: 900px) 224px, (min-width: 671px) 182px, 144px'
   }) + '</div><h2><span>' + escape(item.title) + '</span></h2>'
 }
 
-function featuredTitles() {
+function featuredTitles(featured) {
   const item = featured[featuredIndex]
   return '<section class="featured" aria-label="Featured titles" aria-roledescription="carousel">' +
     '<div class="feature-controls"><button class="feature-rotation" type="button" aria-label="Pause featured carousel">' + icon('pause') + '</button>' +
@@ -138,7 +142,7 @@ function featuredTitles() {
     featureContent(item, true) + '</a><span class="sr-only" data-feature-status aria-live="off"></span></section>'
 }
 
-function bindFeatured(feature, signal) {
+function bindFeatured(feature, featured, signal) {
   const link = feature.querySelector('.feature-link')
   const toggle = feature.querySelector('.feature-rotation')
   const pips = [...feature.querySelectorAll('[data-feature-index]')]
@@ -298,10 +302,6 @@ function cachedCatalogue(key, read) {
   })
 }
 
-const popular = [
-  { key: 'movie', label: 'Popular Movies' },
-  { key: 'series', label: 'Popular Series' }
-]
 const skeletonPosters = '<li><div class="poster"></div></li>'.repeat(6)
 
 function shelfTrack(key, items) {
@@ -310,61 +310,47 @@ function shelfTrack(key, items) {
     (items ? items.map(item => card(item, { shelf: true })).join('') : skeletonPosters) + '</ul>'
 }
 
-function shelf({ key, label, items }) {
+function shelf({ key, label }) {
   return '<section class="shelf" aria-labelledby="shelf-' + key + '"><h2 id="shelf-' + key + '">' + label +
-    '</h2><div id="shelf-body-' + key + '">' + shelfTrack(key, items) + '</div></section>'
-}
-
-function showPopular(key, candidates) {
-  const items = prioritizeHindi(candidates.filter(item => item.artwork && !featured.some(pick => pick.id === item.id))).slice(0, 12)
-  const body = main.querySelector('#shelf-body-' + key)
-  body.innerHTML = items.length ? shelfTrack(key, items) : '<p class="row-status">No titles found.</p>'
-  if (items.length) body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
-}
-
-function unavailablePopular(key) {
-  main.querySelector('#shelf-body-' + key).innerHTML =
-    '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
+    '</h2><div id="shelf-body-' + key + '">' + shelfTrack(key) + '</div></section>'
 }
 
 async function home(signal) {
   routeLabel('')
-  paint('<h1 class="sr-only">Home</h1>' + featuredTitles() +
-    '<div class="shelves">' + [...popular, ...collections.map(row =>
-      row.key === 'top-rated' ? row : { ...row, items: prioritizeHindi(row.items) })].map(shelf).join('') + '</div>', signal)
-  bindFeatured(main.querySelector('.featured'), signal)
-  for (const track of main.querySelectorAll('[data-shelf]')) {
-    track.scrollLeft = shelfPositions.get(track.dataset.shelf) ?? 0
-  }
+  paint('<h1 class="sr-only">Home</h1><div class="featured" aria-hidden="true">' +
+    '<div class="poster feature-placeholder"></div></div><div class="shelves">' +
+    collections.map(shelf).join('') + '</div>', signal)
 
+  let featured = fallbackFeatured
+  let rows = new Map(offlineCollections)
   try {
-    const rows = await cachedCatalogue('catalogue-snapshot', () =>
+    const snapshot = await cachedCatalogue('catalogue-snapshot', () =>
       refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(8000)])))
-    if (signal.aborted) return
-    for (const { key } of popular) showPopular(key, rows.find(row => row.key === key)?.items ?? [])
-    const refreshed = rows.filter(row => row.key === 'trending' || row.key === 'latest')
-    if (!refreshed.length) return
-    const top = main.querySelector('#shelf-top-rated').parentElement
-    top.insertAdjacentHTML('beforebegin', refreshed.map(shelf).join(''))
-    for (const { key } of refreshed) {
-      const track = main.querySelector('[data-shelf="' + key + '"]')
-      track.scrollLeft = shelfPositions.get(key) ?? 0
-    }
+    featured = snapshot.featured
+    rows = new Map(snapshot.rows)
   } catch {
     if (signal.aborted) return
-    if (hosted) {
-      for (const { key } of popular) unavailablePopular(key)
-      return
+    if (!hosted) {
+      // The development server ships without the published snapshot.
+      await Promise.all(['movie', 'series'].map(async kind => {
+        try {
+          const data = await cachedCatalogue([kind, '', 1].join(':'), () => browse({ kind, page: 1, signal }))
+          rows.set(kind, data.items.filter(item => item.artwork))
+        } catch {}
+      }))
     }
-    // Local development can browse without a published snapshot.
-    await Promise.all(popular.map(async ({ key }) => {
-      try {
-        const data = await cachedCatalogue([key, '', 1].join(':'), () => browse({ kind: key, page: 1, signal }))
-        if (!signal.aborted) showPopular(key, data.items)
-      } catch {
-        if (!signal.aborted) unavailablePopular(key)
-      }
-    }))
+  }
+  if (signal.aborted) return
+
+  main.querySelector('.featured').outerHTML = featuredTitles(featured)
+  bindFeatured(main.querySelector('.featured'), featured, signal)
+  for (const { key } of collections) {
+    const body = main.querySelector('#shelf-body-' + key)
+    const items = rows.get(key)
+    body.innerHTML = items?.length ? shelfTrack(key, items) : items
+      ? '<p class="row-status">No titles found.</p>'
+      : '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
+    if (items?.length) body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
   }
 }
 
