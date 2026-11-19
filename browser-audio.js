@@ -2,6 +2,8 @@ const audioPackage = 'https://cdn.jsdelivr.net/npm/'
 const maxRangeSize = 512 * 1024
 const readsPerBatch = 4
 const headerSize = 128 * 1024
+const initialAudioBuffer = 0.4
+const audioReadAhead = 4
 const decoderLoads = new Map()
 const warmStarts = new WeakMap()
 
@@ -158,109 +160,146 @@ export function viaSource(source, readMedia, signal) {
 }
 
 function readBuffers(sink, position) {
-  const buffers = sink.buffers(position)
-  const first = buffers.next()
-  void first.catch(() => {})
-  return { position, buffers, first }
+  return { position, end: position, buffers: sink.buffers(position), entries: [] }
+}
+
+async function fillAudio(job, until) {
+  while (!job.done && !job.closed && job.end < until) {
+    if (job.error) throw job.error
+    job.pending ??= job.buffers.next().then(({ done, value }) => {
+      if (done) job.done = true
+      else if (!job.closed) {
+        job.entries.push(value)
+        job.end = Math.max(job.end, value.timestamp + value.buffer.duration)
+      }
+    }).catch(error => {
+      job.error = error
+      throw error
+    }).finally(() => { job.pending = undefined })
+    await job.pending
+  }
 }
 
 function release(job) {
-  if (job) void job.buffers.return().catch(() => {})
+  if (!job) return
+  job.closed = true
+  job.entries.length = 0
+  void job.buffers.return().catch(() => {})
 }
 
 export function warmAudioStart(sink, signal) {
   if (signal.aborted) return
   const warm = readBuffers(sink, 0)
+  void fillAudio(warm, initialAudioBuffer).catch(() => {})
   warmStarts.set(sink, warm)
   signal.addEventListener('abort', () => {
     if (warmStarts.delete(sink)) release(warm)
   }, { once: true })
 }
 
-export function playDecodedAudio(video, sink, context, signal, { volume, started, failed }) {
+export function playDecodedAudio(video, sink, context, signal, { volume, started, starved, failed }) {
   const gain = context.createGain()
   gain.connect(context.destination)
   const scheduled = new Set()
-  let active
-  let prepared = warmStarts.get(sink)
+  let job = warmStarts.get(sink)
+  let playback
+  let timer
+  let level = volume
   warmStarts.delete(sink)
 
   function stop() {
-    release(active)
-    active = undefined
+    clearInterval(timer)
+    playback = undefined
     for (const source of scheduled) source.stop()
     scheduled.clear()
   }
 
   function reset() {
     stop()
-    release(prepared)
-    prepared = undefined
+    release(job)
+    job = undefined
   }
 
   function prime(position) {
     reset()
-    prepared = readBuffers(sink, position)
+    job = readBuffers(sink, position)
+    void fillAudio(job, position + initialAudioBuffer * video.playbackRate).catch(() => {})
+  }
+
+  function bufferAt(position) {
+    if (!job || position < job.position - 0.06 || position > job.end + 0.3) prime(position)
+    return job
   }
 
   async function ready(position) {
-    if (!prepared || Math.abs(prepared.position - position) > 0.06) prime(position)
-    const job = prepared
+    const current = bufferAt(position)
     try {
-      const first = await job.first
-      if (prepared !== job || signal.aborted) return false
-      if (!first.done || position >= video.duration - 1) return true
+      await fillAudio(current, position + initialAudioBuffer * video.playbackRate)
+      if (job !== current || signal.aborted) return false
+      if (current.entries.length || position >= video.duration - 1) return true
       failed(new Error('No audio samples at this position.'))
     } catch (error) {
-      if (prepared === job && !signal.aborted) failed(error)
+      if (job === current && !signal.aborted) failed(error)
     }
     return false
   }
 
-  async function start() {
-    if (active || video.paused || video.seeking || video.readyState < 3 || signal.aborted) return
+  function start() {
+    if (playback || video.paused || video.seeking || video.readyState < 3 || signal.aborted) return
     const position = video.currentTime
-    if (prepared && Math.abs(prepared.position - position) > 0.65) {
-      release(prepared)
-      prepared = undefined
-    }
-    const job = prepared ?? readBuffers(sink, position)
-    prepared = undefined
-    active = job
-    const clock = context.currentTime
+    const current = bufferAt(position)
     const rate = video.playbackRate
-    try {
-      let next = await job.first
-      let playing = false
-      while (!next.done) {
-        const { buffer, timestamp } = next.value
-        while (active === job && timestamp > video.currentTime + 1) {
-          await new Promise(resolve => setTimeout(resolve, 75))
-        }
-        if (active !== job) return
-        const when = clock + (timestamp - position) / rate
-        const skip = Math.max(0, (context.currentTime - when) * rate)
-        if (skip < buffer.duration) {
+    const clock = context.currentTime
+    let lastTimestamp = -Infinity
+    let playing = false
+    playback = current
+    timer = setInterval(pump, 40)
+    pump()
+
+    function pump() {
+      if (playback !== current || video.paused || video.seeking) return
+      const now = video.currentTime
+      while (current.entries[0] && current.entries[0].timestamp + current.entries[0].buffer.duration < now - 0.15) {
+        const { buffer, timestamp } = current.entries.shift()
+        current.position = Math.max(current.position, timestamp + buffer.duration)
+      }
+      if (!current.filling && !current.done) {
+        current.filling = true
+        void fillAudio(current, now + audioReadAhead * rate).catch(error => {
+          if (job === current && !signal.aborted) failed(error)
+        }).finally(() => { current.filling = false })
+      }
+      if (level > 0 && !current.done && current.end < now + 0.12 * rate) {
+        starved()
+        return
+      }
+      try {
+        for (const { buffer, timestamp } of current.entries) {
+          if (timestamp <= lastTimestamp) continue
+          if (timestamp > now + 0.75 * rate) break
+          lastTimestamp = timestamp
+          const when = clock + (timestamp - position) / rate
+          const skip = Math.max(0, (context.currentTime - when) * rate)
+          if (skip >= buffer.duration) continue
           const source = context.createBufferSource()
           source.buffer = buffer
           source.playbackRate.value = rate
           source.connect(gain)
-          scheduled.add(source)
           source.onended = () => { scheduled.delete(source); source.disconnect() }
           source.start(Math.max(when, context.currentTime), skip)
+          scheduled.add(source)
           if (!playing) started()
           playing = true
         }
-        next = await job.buffers.next()
+      } catch (error) {
+        if (!signal.aborted) failed(error)
       }
-      if (active === job && !playing && position < video.duration - 1) failed(new Error('No audio samples at this position.'))
-    } catch (error) {
-      if (active === job) failed(error)
     }
   }
 
   for (const event of ['playing', 'seeked']) video.addEventListener(event, start, { signal })
-  video.addEventListener('ratechange', () => { stop(); void start() }, { signal })
+  video.addEventListener('ratechange', () => { stop(); start() }, { signal })
+  // Keep decoded audio during a pause so buffering does not reopen the reader.
   for (const event of ['pause', 'seeking', 'waiting', 'ended']) video.addEventListener(event, stop, { signal })
   signal.addEventListener('abort', () => {
     reset()
@@ -268,10 +307,11 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
   }, { once: true })
   gain.gain.value = volume
   function setVolume(value) {
+    level = value
     gain.gain.cancelScheduledValues(context.currentTime)
     gain.gain.setTargetAtTime(value, context.currentTime, 0.012)
   }
-  if (!prepared) prime(video.currentTime)
-  void start()
+  if (!job) prime(video.currentTime)
+  start()
   return { prime, ready, reset, setVolume }
 }
