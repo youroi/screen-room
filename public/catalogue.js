@@ -66,14 +66,14 @@ export const collections = [
   {
     key: 'top-rated',
     label: 'Top Rated Movies',
-    // Selections from the IMDb Top 250 without claiming their current chart positions.
+    // IMDb Top 250 order recorded on 15 November 2026.
     items: picks('movie', [
       ['tt0111161', 'The Shawshank Redemption'], ['tt0068646', 'The Godfather'],
       ['tt0468569', 'The Dark Knight'], ['tt0071562', 'The Godfather Part II'],
-      ['tt0050083', '12 Angry Men'], ['tt0108052', "Schindler's List"],
-      ['tt0167260', 'The Lord of the Rings: The Return of the King'], ['tt0110912', 'Pulp Fiction'],
-      ['tt0120737', 'The Lord of the Rings: The Fellowship of the Ring'], ['tt0137523', 'Fight Club'],
-      ['tt0109830', 'Forrest Gump'], ['tt1375666', 'Inception']
+      ['tt0167260', 'The Lord of the Rings: The Return of the King'], ['tt0050083', '12 Angry Men'],
+      ['tt0108052', "Schindler's List"], ['tt0120737', 'The Lord of the Rings: The Fellowship of the Ring'],
+      ['tt0110912', 'Pulp Fiction'], ['tt0167261', 'The Lord of the Rings: The Two Towers'],
+      ['tt0060196', 'The Good, the Bad and the Ugly'], ['tt0109830', 'Forrest Gump']
     ])
   },
   {
@@ -105,6 +105,25 @@ export const collections = [
     ])
   }
 ]
+
+export async function refreshedCollections(signal) {
+  const response = await fetch(new URL('./catalogue-snapshot.json', import.meta.url), { signal, credentials: 'omit' })
+  if (!response.ok) throw new Error('The catalogue snapshot is unavailable.')
+  const data = await response.json()
+  if (!Array.isArray(data?.trending) || !Array.isArray(data.latest)) throw new Error('Invalid catalogue snapshot.')
+  return [
+    { key: 'trending', label: 'Trending This Week', items: data.trending },
+    { key: 'latest', label: 'Latest Releases', items: data.latest }
+  ].map(row => ({
+    ...row,
+    items: row.items.flatMap(item => {
+      const title = string(item?.title)
+      const artwork = image(item?.artwork)
+      return imdbId.test(item?.id) && kinds.has(item.kind) && title && artwork
+        ? [{ id: item.id, kind: item.kind, title, artwork }] : []
+    }).slice(0, 12)
+  })).filter(row => row.items.length)
+}
 
 export async function search(query, signal) {
   const results = await Promise.allSettled([...kinds].map(kind => list(kind, { query, page: 1, signal })))

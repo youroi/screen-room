@@ -1,4 +1,5 @@
-import { browse, search, title, featured, collections, imdbId, kinds } from './catalogue.js?v=4'
+import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=5'
+import { prioritizeHindi } from './hindi-dubs.js?v=1'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
@@ -317,18 +318,19 @@ function shelf({ key, label, items }) {
 async function home(signal) {
   routeLabel('')
   paint('<h1 class="sr-only">Home</h1>' + featuredTitles() +
-    '<div class="shelves">' + [...popular, ...collections].map(shelf).join('') + '</div>', signal)
+    '<div class="shelves">' + [...popular, ...collections.map(row =>
+      row.key === 'top-rated' ? row : { ...row, items: prioritizeHindi(row.items) })].map(shelf).join('') + '</div>', signal)
   bindFeatured(main.querySelector('.featured'), signal)
   for (const track of main.querySelectorAll('[data-shelf]')) {
     track.scrollLeft = shelfPositions.get(track.dataset.shelf) ?? 0
   }
 
-  await Promise.all(popular.map(async ({ key }) => {
+  const loadPopular = Promise.all(popular.map(async ({ key }) => {
     const body = main.querySelector('#shelf-body-' + key)
     try {
       const data = await cachedCatalogue([key, '', 1].join(':'), () => browse({ kind: key, page: 1, signal }))
       if (signal.aborted) return
-      const items = data.items.filter(item => item.artwork && !featured.some(pick => pick.id === item.id)).slice(0, 12)
+      const items = prioritizeHindi(data.items.filter(item => item.artwork && !featured.some(pick => pick.id === item.id))).slice(0, 12)
       body.innerHTML = items.length ? shelfTrack(key, items) : '<p class="row-status">No titles found.</p>'
       if (body.firstElementChild.matches('[data-shelf]')) {
         body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
@@ -339,6 +341,23 @@ async function home(signal) {
       }
     }
   }))
+
+  const loadRefresh = cachedCatalogue('catalogue-snapshot', () =>
+    refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(4000)]))
+  ).then(rows => {
+    if (signal.aborted || !rows.length) return
+    const top = main.querySelector('#shelf-top-rated').parentElement
+    top.insertAdjacentHTML('beforebegin', rows.map(shelf).join(''))
+    for (const { key } of rows) {
+      const track = main.querySelector('[data-shelf="' + key + '"]')
+      track.scrollLeft = shelfPositions.get(key) ?? 0
+    }
+    main.insertAdjacentHTML('beforeend', '<section class="catalogue-credits" aria-label="Credits">' +
+      '<a href="https://www.themoviedb.org"><img src="' + escape(new URL('tmdb.svg', publicHome).href) +
+      '" alt="TMDB" width="62" height="9" loading="lazy"></a>' +
+      '<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section>')
+  }).catch(() => {})
+  await Promise.all([loadPopular, loadRefresh])
 }
 
 async function list(url, signal) {
