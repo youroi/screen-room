@@ -350,11 +350,6 @@ async function home(signal) {
       const track = main.querySelector('[data-shelf="' + key + '"]')
       track.scrollLeft = shelfPositions.get(key) ?? 0
     }
-    main.insertAdjacentHTML('beforeend', '<section class="catalogue-credits" aria-label="Credits">' +
-      '<a href="https://www.themoviedb.org"><img src="' + escape(new URL('tmdb.svg', publicHome).href) +
-      '" alt="TMDB" width="62" height="9" loading="lazy"></a>' +
-      '<p>This product uses the TMDB API but is not endorsed or certified by TMDB. ' +
-      'Digital availability data provided by <a href="https://www.justwatch.com/">JustWatch</a>.</p></section>')
   } catch {
     if (signal.aborted) return
     if (hosted) {

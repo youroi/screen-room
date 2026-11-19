@@ -203,6 +203,7 @@ h1 { font-size: clamp(1.9rem, 4vw, 3.15rem); font-weight: 650; line-height: 1.06
 .shelf-track.skeleton li::after { display: block; height: 34px; margin-top: 6px; content: ""; }
 .row-status { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 72px; color: var(--muted); font-size: .88rem; }
 .catalogue-credits { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 36px; padding-top: 15px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .8rem; }
+.catalogue-credits h2 { flex-basis: 100%; font-size: .95rem; color: var(--ink); }
 .catalogue-credits > a { display: inline-grid; min-height: 28px; align-items: center; }
 .catalogue-credits p a { text-decoration: underline; text-underline-offset: 2px; }
 .section-head { margin-bottom: 20px; }
