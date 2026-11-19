@@ -52,28 +52,33 @@ export async function enableBrowserAudio(video, source, context, playerSignal, f
   }
 }
 
-function viaSource(source, readMedia, signal) {
+export function viaSource(source, readMedia, signal) {
   let size
+
+  async function readRange(start, end) {
+    const { headers, bytes } = await readMedia(source, start, end, signal)
+    const reported = /^content-range:\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/mi.exec(headers)
+    const total = Number(reported?.[3])
+    if (Number(reported?.[1]) !== start || Number(reported?.[2]) !== end - 1 ||
+        !Number.isSafeInteger(total) || total < end || (size !== undefined && total !== size)) {
+      throw new Error('The file server returned a different byte range.')
+    }
+    size = total
+    return new Uint8Array(bytes)
+  }
+
   return {
     prefetchProfile: 'fileSystem', maxCacheSize: 8 * 1024 * 1024,
     async getSize() {
-      const { headers } = await readMedia(source, undefined, undefined, signal)
-      size = Number(/^content-length:\s*(\d+)\s*$/mi.exec(headers)?.[1])
-      if (!Number.isSafeInteger(size) || size <= 0 || !/^accept-ranges:\s*bytes\s*$/mi.test(headers)) {
-        throw new Error('The file server does not support readable byte ranges.')
-      }
+      // A successful range provides the file size even when the server rejects HEAD.
+      await readRange(0, 1)
       return size
     },
     async read(start, end) {
       const data = new Uint8Array(end - start)
       for (let offset = start; offset < end; offset += maxRangeSize) {
         const limit = Math.min(offset + maxRangeSize, end)
-        const { headers, bytes } = await readMedia(source, offset, limit, signal)
-        const reported = /^content-range:\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/mi.exec(headers)
-        if (Number(reported?.[1]) !== offset || Number(reported?.[2]) !== limit - 1 || Number(reported?.[3]) !== size) {
-          throw new Error('The file server returned a different byte range.')
-        }
-        data.set(new Uint8Array(bytes), offset - start)
+        data.set(await readRange(offset, limit), offset - start)
       }
       return data
     }

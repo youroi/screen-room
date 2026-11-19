@@ -547,7 +547,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   async function recoverAudio() {
     audioRecovery = 'loading'
     try {
-      const { enableBrowserAudio } = await import('./browser-audio.js?v=2')
+      const { enableBrowserAudio } = await import('./browser-audio.js?v=3')
       signal.throwIfAborted()
       stopBrowserAudio = await enableBrowserAudio(video, source, audioContext, signal, audioRecoveryFailed)
       if (audioRecovery !== 'failed') audioRecovery = stopBrowserAudio ? 'active' : 'native'
