@@ -2,41 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#171918">
-  <title>Screen Room</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0d10">
+  <title>Drisho</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./style.css?v=11">
-  <script type="module" src="./app.js?v=19"></script>
+  <link rel="stylesheet" href="./style.css?v=12">
+  <script type="module" src="./app.js?v=20"></script>
 </head>
 <body>
   <a href="#main" class="skip">Skip to content</a>
   <header class="masthead">
     <div class="shell masthead-inner">
-      <a class="wordmark" href="/" data-route>
-        <span class="wordmark-mark" aria-hidden="true"></span>
-        <span>Screen Room</span>
+      <a class="wordmark" href="/" data-route aria-label="Drisho home">drisho</a>
+      <a class="header-search" href="/search" data-route data-nav="search" aria-label="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="5.75"/><path d="m15 15 4 4"/></svg>
       </a>
-      <nav class="main-nav" aria-label="Main">
-        <a href="/" data-route data-nav="browse">Browse</a>
-        <a class="header-search" href="/search" data-route data-nav="search"><span class="search-icon" aria-hidden="true"></span>Search</a>
-      </nav>
     </div>
   </header>
   <main id="main" class="shell" tabindex="-1"></main>
   <noscript><p class="shell">Enable JavaScript to browse and play titles.</p></noscript>
-  <footer class="site-footer">
-    <div class="shell footer-inner">
-      <a class="wordmark" href="/" data-route>
-        <span class="wordmark-mark" aria-hidden="true"></span>
-        <span>Screen Room</span>
-      </a>
-      <nav aria-label="Footer">
-        <a href="/?kind=movie" data-route>Movies</a>
-        <a href="/?kind=series" data-route>Series</a>
-        <a href="./web-play.html" data-player-help>Player setup</a>
-      </nav>
+  <footer class="shell site-footer"><a href="./web-play.html" data-player-help>Player setup</a></footer>
+  <nav class="tab-bar" aria-label="Main">
+    <div class="tab-bar-inner">
+      <a href="/" data-route data-nav="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21v-6h6v6"/></svg>Home</a>
+      <a href="/?kind=movie" data-route data-nav="movie"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m-4 6h4m10-6h4m-4 6h4"/></svg>Movies</a>
+      <a href="/?kind=series" data-route data-nav="series"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="m8 3 4 4 4-4"/></svg>Series</a>
     </div>
-  </footer>
+  </nav>
 </body>
 </html>

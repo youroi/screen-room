@@ -1,4 +1,4 @@
-import { browse, search, title, imdbId, kinds } from './catalogue.js?v=3'
+import { browse, search, title, featured, collections, imdbId, kinds } from './catalogue.js?v=4'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
@@ -6,15 +6,16 @@ const circleTab = circleWebOrigins.includes(location.origin)
 const hosted = location.protocol === 'https:' || circleTab
 const publicHome = new URL('./', import.meta.url).href
 const webPlayerHelp = new URL('web-play.html', publicHome).href
-const genres = ['', 'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
-  'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller']
 let navigation
 const titleCache = new Map()
 const catalogueCache = new Map()
 const scrollPositions = new Map()
+const shelfPositions = new Map()
+const rotationKey = 'drisho-rotate-featured'
+let featuredIndex = 0
 let currentRoute = readRoute()
 history.scrollRestoration = 'manual'
-for (const link of document.querySelectorAll('header [data-route], footer [data-route]')) {
+for (const link of document.querySelectorAll('[data-route]')) {
   link.setAttribute('href', routeTarget(link.getAttribute('href')))
 }
 const playerHelp = document.querySelector('[data-player-help]')
@@ -28,6 +29,7 @@ const searchIcon = '<span class="search-icon" aria-hidden="true"></span>'
 const playIcon = '<span class="play-icon" aria-hidden="true"></span>'
 const glyphs = {
   pause: '<path d="M9 5v14m6-14v14"/>',
+  play: '<path d="m9 5 11 7-11 7z"/>',
   volume: '<path d="M4 9v6h4l5 4V5L8 9H4zm12 0a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10"/>',
   muted: '<path d="M4 9v6h4l5 4V5L8 9H4zm12 1 5 5m0-5-5 5"/>',
   full: '<path d="M9 5H5v4m10-4h4v4M5 15v4h4m6 0h4v-4"/>',
@@ -70,7 +72,7 @@ function itemRoute(mode, item) {
 }
 
 function routeLabel(title) {
-  document.title = title ? title + ' · Screen Room' : 'Screen Room'
+  document.title = title ? title + ' · Drisho' : 'Drisho'
 }
 
 function paint(html, signal) {
@@ -83,87 +85,187 @@ function metadata(item, extended = false) {
     .filter(Boolean).map(value => '<span>' + escape(value) + '</span>').join('')
 }
 
-function artwork(item, eager = false) {
+function artwork(item, { eager = false, priority = false, sizes = '(min-width: 671px) 164px, 108px' } = {}) {
   const fallback = '<span class="poster-fallback" aria-hidden="true">' + escape(item.title) + '</span>'
-  return fallback + (item.artwork
-    ? '<img src="' + escape(item.artwork) + '" alt="" referrerpolicy="no-referrer" ' +
-      (eager ? '' : 'loading="lazy" ') + 'decoding="async">'
-    : '')
+  if (!item.artwork) return fallback
+  const attrs = ' alt="" referrerpolicy="no-referrer"' + (eager ? '' : ' loading="lazy"') +
+    (priority ? ' fetchpriority="high"' : '') + ' decoding="async"'
+  if (!/^https:\/\/images\.metahub\.space\/poster\/small\//.test(item.artwork)) {
+    return fallback + '<img src="' + escape(item.artwork) + '"' + attrs + '>'
+  }
+  const posterUrl = (size, format) => {
+    const url = new URL(item.artwork.replace('/poster/small/', '/poster/' + size + '/'))
+    url.searchParams.set('format', format)
+    return escape(url.href)
+  }
+  const source = format => ' srcset="' + posterUrl('small', format) + ' 300w, ' +
+    posterUrl('medium', format) + ' 500w, ' + posterUrl('large', format) + ' 780w" sizes="' + sizes + '"'
+  return fallback + '<picture><source type="image/webp"' + source('webp') + '>' +
+    '<img src="' + posterUrl('small', 'jpeg') + '"' + source('jpeg') + attrs + '></picture>'
 }
 
 main.addEventListener('error', event => {
-  if (event.target instanceof HTMLImageElement) event.target.hidden = true
+  const img = event.target
+  if (!(img instanceof HTMLImageElement)) return
+  if (img.hasAttribute('srcset') && img.currentSrc !== img.src) {
+    img.parentElement.querySelector('source')?.remove()
+    img.removeAttribute('srcset')
+    return
+  }
+  img.hidden = true
 }, true)
 
-function card(item, index, showKind) {
+function card(item, { eager = false, showKind = false, shelf = false } = {}) {
   return '<li><a class="title-card" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
-    '<div class="poster">' + artwork(item, index < 6) + '</div>' +
-    '<h2>' + escape(item.title) + '</h2><span class="meta">' +
-    (showKind ? metadata(item) : escape(item.year)) + '</span>' +
+    '<div class="poster">' + artwork(item, { eager, sizes: shelf ? undefined : '(min-width: 671px) 180px, 45vw' }) + '</div>' +
+    '<h' + (shelf ? '3' : '2') + '>' + escape(item.title) + '</h' + (shelf ? '3' : '2') + '>' +
+    (shelf ? '' : '<span class="meta">' + (showKind ? metadata(item) : escape(item.year)) + '</span>') +
     '</a></li>'
 }
 
-function featuredTitles(items, kind) {
-  const titles = items.filter(item => item.backdrop).slice(0, 4)
-  if (!titles.length) return ''
-  const slides = titles.map((item, index) => {
-    const facts = [item.year, ...item.genres.slice(0, 2)].filter(Boolean)
-    return '<article class="feature-slide"' + (index ? ' inert aria-hidden="true"' : '') + '>' +
-      '<img class="feature-art" src="' + escape(item.backdrop) + '" alt="" referrerpolicy="no-referrer" ' +
-      (index === 0 ? 'fetchpriority="high"' : 'loading="lazy"') + ' decoding="async">' +
-      '<div class="feature-copy"><h2>' + escape(item.title) + '</h2><p class="meta">' +
-      facts.map(value => '<span>' + escape(value) + '</span>').join('') + '</p>' +
-      (item.description ? '<p class="feature-description">' + escape(item.description) + '</p>' : '') +
-      '<a class="button primary" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
-      'View details' + icon('expand') + '</a></div></article>'
-  }).join('')
-  const controls = titles.length > 1 ? '<div class="feature-controls">' +
-    '<button type="button" class="feature-arrow" data-feature-step="-1" aria-label="Previous featured title" disabled>' + icon('back') + '</button>' +
-    '<div class="feature-pips">' + titles.map((item, index) =>
+function featureContent(item, priority = false) {
+  return '<div class="poster feature-poster">' + artwork(item, {
+    eager: true, priority, sizes: '(min-width: 900px) 224px, 144px'
+  }) + '</div><h2><span>' + escape(item.title) + '</span></h2>'
+}
+
+function featuredTitles() {
+  const item = featured[featuredIndex]
+  return '<section class="featured" aria-label="Featured titles" aria-roledescription="carousel">' +
+    '<div class="feature-controls"><button class="feature-rotation" type="button" aria-label="Pause featured carousel">' + icon('pause') + '</button>' +
+    '<div class="feature-pips" role="group" aria-label="Choose featured title">' + featured.map((item, index) =>
       '<button type="button" data-feature-index="' + index + '" aria-label="' + escape('Show ' + item.title) +
-      '"' + (index === 0 ? ' aria-current="true"' : '') + '></button>').join('') + '</div>' +
-    '<button type="button" class="feature-arrow" data-feature-step="1" aria-label="Next featured title">' + icon('expand') + '</button></div>' : ''
-  return '<section class="featured" aria-label="Featured ' + (kind === 'series' ? 'series' : 'movies') + '">' +
-    '<div class="feature-track" role="group" tabindex="0" aria-label="Featured titles">' + slides + '</div>' + controls + '</section>'
+      '"' + (index === featuredIndex ? ' aria-current="true"' : '') + '></button>').join('') + '</div></div>' +
+    '<a class="feature-link" href="' + escape(routeTarget(itemRoute('title', item))) + '" data-route>' +
+    featureContent(item, true) + '</a><span class="sr-only" data-feature-status aria-live="off"></span></section>'
 }
 
 function bindFeatured(feature, signal) {
-  const track = feature.querySelector('.feature-track')
-  const slides = feature.querySelectorAll('.feature-slide')
+  const link = feature.querySelector('.feature-link')
+  const toggle = feature.querySelector('.feature-rotation')
   const pips = [...feature.querySelectorAll('[data-feature-index]')]
-  if (!pips.length) return
-  const previous = feature.querySelector('[data-feature-step="-1"]')
-  const next = feature.querySelector('[data-feature-step="1"]')
-  let selected = 0
+  const status = feature.querySelector('[data-feature-status]')
+  const motion = matchMedia('(prefers-reduced-motion: reduce)')
+  let rotate = !motion.matches
+  try {
+    const saved = localStorage.getItem(rotationKey)
+    if (saved !== null) rotate = saved === 'on'
+  } catch {}
+  let visible = false
+  let hovering = false
+  let pointer = null
+  let suppressClick = false
+  let timer
 
-  function select(index) {
-    track.scrollTo({ left: Math.max(0, Math.min(pips.length - 1, index)) * track.clientWidth })
+  function schedule() {
+    clearTimeout(timer)
+    if (rotate && visible && !document.hidden && !hovering && !pointer) {
+      timer = setTimeout(() => select(featuredIndex + 1), 7000)
+    }
   }
 
-  track.addEventListener('scroll', () => {
-    const index = Math.max(0, Math.min(pips.length - 1, Math.round(track.scrollLeft / track.clientWidth)))
-    if (index === selected) return
-    slides[selected].inert = true
-    slides[selected].setAttribute('aria-hidden', 'true')
-    slides[index].inert = false
-    slides[index].removeAttribute('aria-hidden')
-    pips[selected].removeAttribute('aria-current')
-    pips[index].setAttribute('aria-current', 'true')
-    selected = index
-    previous.disabled = selected === 0
-    next.disabled = selected === pips.length - 1
-  }, { signal, passive: true })
-  track.addEventListener('keydown', event => {
-    if (event.target !== track || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
+  function syncRotation() {
+    const action = rotate ? 'Pause' : 'Resume'
+    toggle.setAttribute('aria-label', action + ' featured carousel')
+    toggle.title = action + ' rotation'
+    toggle.innerHTML = icon(rotate ? 'pause' : 'play')
+    status.setAttribute('aria-live', rotate ? 'off' : 'polite')
+    schedule()
+  }
+
+  function setRotation(value) {
+    if (rotate === value) return
+    rotate = value
+    try { localStorage.setItem(rotationKey, value ? 'on' : 'off') } catch {}
+    syncRotation()
+  }
+
+  function select(index) {
+    index = (index + featured.length) % featured.length
+    if (index !== featuredIndex) {
+      pips[featuredIndex].removeAttribute('aria-current')
+      featuredIndex = index
+      const item = featured[index]
+      pips[index].setAttribute('aria-current', 'true')
+      link.href = routeTarget(itemRoute('title', item))
+      link.innerHTML = featureContent(item)
+      status.textContent = item.title
+      if (!motion.matches) {
+        link.animate([{ opacity: .48 }, { opacity: 1 }], { duration: 240, easing: 'cubic-bezier(.2,.75,.3,1)' })
+      }
+    }
+    schedule()
+  }
+
+  const observer = new IntersectionObserver(([entry]) => {
+    visible = entry.intersectionRatio >= .5
+    schedule()
+  }, { threshold: .5 })
+  observer.observe(feature)
+  signal.addEventListener('abort', () => {
+    clearTimeout(timer)
+    observer.disconnect()
+  }, { once: true })
+  document.addEventListener('visibilitychange', schedule, { signal })
+  feature.addEventListener('pointerenter', event => {
+    if (event.pointerType !== 'mouse') return
+    hovering = true
+    schedule()
+  }, { signal })
+  feature.addEventListener('pointerleave', event => {
+    if (event.pointerType !== 'mouse') return
+    hovering = false
+    schedule()
+  }, { signal })
+  feature.addEventListener('focusin', event => {
+    if (event.target.matches(':focus-visible')) setRotation(false)
+  }, { signal })
+  feature.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || event.button !== 0) return
+    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, swipe: !event.target.closest('.feature-controls') }
+    suppressClick = false
+    schedule()
+  }, { signal })
+  window.addEventListener('pointerup', event => {
+    if (pointer?.id !== event.pointerId) return
+    const { x, y, swipe } = pointer
+    pointer = null
+    const dx = event.clientX - x
+    const dy = event.clientY - y
+    if (swipe && Math.max(Math.abs(dx), Math.abs(dy)) > 12) {
+      suppressClick = true
+      if (Math.abs(dx) >= 36 && Math.abs(dx) > Math.abs(dy)) {
+        setRotation(false)
+        select(featuredIndex + (dx < 0 ? 1 : -1))
+      }
+    }
+    schedule()
+  }, { signal })
+  window.addEventListener('pointercancel', event => {
+    if (pointer?.id !== event.pointerId) return
+    pointer = null
+    schedule()
+  }, { signal })
+  link.addEventListener('click', event => {
+    if (!suppressClick || !event.detail) return
     event.preventDefault()
-    select(selected + (event.key === 'ArrowLeft' ? -1 : 1))
+    event.stopPropagation()
+    suppressClick = false
   }, { signal })
-  feature.querySelector('.feature-controls').addEventListener('click', event => {
-    const button = event.target.closest('button')
-    if (!button) return
-    select(button.dataset.featureIndex === undefined
-      ? selected + Number(button.dataset.featureStep) : Number(button.dataset.featureIndex))
+  feature.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+    event.preventDefault()
+    setRotation(false)
+    select(featuredIndex + (event.key === 'ArrowLeft' ? -1 : 1))
   }, { signal })
+  toggle.addEventListener('click', () => setRotation(!rotate), { signal })
+  for (const pip of pips) {
+    pip.addEventListener('click', () => {
+      setRotation(false)
+      select(Number(pip.dataset.featureIndex))
+    }, { signal })
+  }
+  syncRotation()
 }
 
 function linkToPage(url, page) {
@@ -188,73 +290,179 @@ function message(title, detail, action = '') {
 
 const retryButton = '<button class="button quiet" type="button" data-retry>Try again</button>'
 
-function rowsHeader(searching, query, kind, genre, featured) {
-  if (searching) {
-    return '<div class="section-head"><h1>Search</h1></div>' +
-      '<form class="search-form" action="/search" role="search">' + searchIcon +
-      '<input name="q" type="search" aria-label="Search movies and series" maxlength="100" placeholder="Search movies and series" value="' +
-      escape(query) + '"><button class="button primary" type="submit">Search</button></form>'
+function cachedCatalogue(key, read) {
+  const cached = catalogueCache.get(key)
+  if (cached?.expires > Date.now()) return Promise.resolve(cached.data)
+  return read().then(data => {
+    if (catalogueCache.size >= 16) catalogueCache.delete(catalogueCache.keys().next().value)
+    catalogueCache.set(key, { data, expires: Date.now() + 90_000 })
+    return data
+  })
+}
+
+const popular = [
+  { key: 'movie', label: 'Popular Movies' },
+  { key: 'series', label: 'Popular Series' }
+]
+const skeletonPosters = '<li><div class="poster"></div></li>'.repeat(6)
+
+function shelfTrack(key, items) {
+  return '<ul class="shelf-track' + (items ? '" data-shelf="' + key + '" tabindex="0" aria-labelledby="shelf-' + key + '"' :
+    ' skeleton" aria-hidden="true"') + '>' +
+    (items ? items.map(item => card(item, { shelf: true })).join('') : skeletonPosters) + '</ul>'
+}
+
+function shelf({ key, label, items }) {
+  return '<section class="shelf" aria-labelledby="shelf-' + key + '"><h2 id="shelf-' + key + '">' + label +
+    '</h2><div id="shelf-body-' + key + '">' + shelfTrack(key, items) + '</div></section>'
+}
+
+async function home(signal) {
+  routeLabel('')
+  paint('<h1 class="sr-only">Home</h1>' + featuredTitles() +
+    '<div class="shelves">' + [...popular, ...collections].map(shelf).join('') + '</div>', signal)
+  bindFeatured(main.querySelector('.featured'), signal)
+  for (const track of main.querySelectorAll('[data-shelf]')) {
+    track.scrollLeft = shelfPositions.get(track.dataset.shelf) ?? 0
   }
-  const filter = genre ? '&genre=' + encodeURIComponent(genre) : ''
-  const tabs = [['movie', 'Movies'], ['series', 'Series']].map(([value, name]) =>
-    '<a href="' + escape(routeTarget('/?kind=' + value + filter)) + '" data-route' +
-    (kind === value ? ' aria-current="page"' : '') + '>' + name + '</a>').join('')
-  const collection = (genre || 'Popular') + (kind === 'series' ? ' series' : ' movies')
-  const heading = featured ? 'h2' : 'h1'
-  return '<div class="section-head"><' + heading + '>' + escape(collection) + '</' + heading + '><div class="browse-filters">' +
-    '<nav class="type-tabs" aria-label="Title type">' + tabs + '</nav><div class="category">' +
-    '<select name="genre" aria-label="Genre">' +
-    genres.map(value => '<option value="' + escape(value) + '"' +
-      (value === genre ? ' selected' : '') + '>' + escape(value || 'All genres') + '</option>').join('') +
-    '</select></div></div></div>'
+
+  await Promise.all(popular.map(async ({ key }) => {
+    const body = main.querySelector('#shelf-body-' + key)
+    try {
+      const data = await cachedCatalogue([key, '', 1].join(':'), () => browse({ kind: key, page: 1, signal }))
+      if (signal.aborted) return
+      const items = data.items.filter(item => item.artwork && !featured.some(pick => pick.id === item.id)).slice(0, 12)
+      body.innerHTML = items.length ? shelfTrack(key, items) : '<p class="row-status">No titles found.</p>'
+      if (body.firstElementChild.matches('[data-shelf]')) {
+        body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
+      }
+    } catch {
+      if (!signal.aborted) {
+        body.innerHTML = '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
+      }
+    }
+  }))
 }
 
 async function list(url, signal) {
-  const searching = url.pathname === '/search'
-  const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100)
   const kind = url.searchParams.get('kind') === 'series' ? 'series' : 'movie'
-  const genre = genres.includes(url.searchParams.get('genre')) ? url.searchParams.get('genre') : ''
+  const genre = (url.searchParams.get('genre') ?? '').slice(0, 40)
   const page = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('page'), 10) || 1))
-  routeLabel(searching ? 'Search' : 'Browse')
-  const showFeature = !searching && !genre && page === 1
-  const heading = rowsHeader(searching, query, kind, genre, showFeature)
-  if (searching && !query) {
-    paint(heading, signal)
-    return
-  }
-  const skeleton = '<p role="status" class="sr-only">Loading titles</p><ul class="grid skeleton" aria-hidden="true">' +
-    '<li><div class="poster"></div></li>'.repeat(6) + '</ul>'
-  const key = searching ? 'search:' + query : [kind, genre, page].join(':')
-  const cached = catalogueCache.get(key)
-  const saved = cached?.expires > Date.now()
-  const feature = showFeature ? '<h1 class="sr-only">Browse</h1><div id="featured-area">' +
-    (saved ? '' : '<div class="feature-skeleton" aria-hidden="true"></div>') + '</div>' : ''
-  paint(feature + heading + '<div id="list-body">' + (saved ? '' : skeleton) + '</div>', signal)
+  const heading = kind === 'series' ? 'Series' : 'Movies'
+  routeLabel(heading)
+  paint('<div class="section-head"><h1>' + escape(genre ? genre + ' ' + heading.toLowerCase() : heading) + '</h1></div>' +
+    '<div id="list-body"><p role="status" class="sr-only">Loading titles</p><ul class="grid skeleton" aria-hidden="true">' +
+    skeletonPosters + '</ul></div>', signal)
+
+  const listBody = main.querySelector('#list-body')
   try {
-    const data = saved ? cached.data : await (searching ? search(query, signal) : browse({ kind, genre, page, signal }))
+    const data = await cachedCatalogue([kind, genre, page].join(':'), () => browse({ kind, genre, page, signal }))
     if (signal.aborted) return
-    if (!saved) {
-      if (catalogueCache.size >= 16) catalogueCache.delete(catalogueCache.keys().next().value)
-      catalogueCache.set(key, { data, expires: Date.now() + 90_000 })
-    }
-    if (showFeature) {
-      const area = main.querySelector('#featured-area')
-      area.innerHTML = featuredTitles(data.items, kind)
-      if (area.firstElementChild) bindFeatured(area.firstElementChild, signal)
-    }
-    const listBody = main.querySelector('#list-body')
-    listBody.innerHTML = data.items.length
-      ? '<ul class="grid">' + data.items.map((item, index) => card(item, index, searching)).join('') + '</ul>' +
-        pageLinks(url, page, data.hasNext)
-      : message('No titles found', searching ? 'Try another title.' : 'Choose another genre or page.') +
-        pageLinks(url, page, data.hasNext)
+    listBody.innerHTML = (data.items.length
+      ? '<ul class="grid">' + data.items.map((item, index) => card(item, { eager: index < 6 })).join('') + '</ul>'
+      : message('No titles found', 'Choose another page.')) + pageLinks(url, page, data.hasNext)
   } catch (error) {
-    if (!signal.aborted) {
-      main.querySelector('#featured-area')?.replaceChildren()
-      main.querySelector('#list-body').innerHTML = message('Catalogue unavailable', error.message,
-        retryButton)
+    if (!signal.aborted) listBody.innerHTML = message('Catalogue unavailable', error.message, retryButton)
+  }
+}
+
+const searchHistoryKey = 'drisho-search-history'
+
+function recentSearches() {
+  try {
+    const terms = JSON.parse(localStorage.getItem(searchHistoryKey) ?? '[]')
+    return Array.isArray(terms) ? terms.filter(term => typeof term === 'string' && term.length <= 100).slice(0, 6) : []
+  } catch {
+    return []
+  }
+}
+
+function rememberSearch(term) {
+  if (!term) return
+  const recent = recentSearches().filter(existing => existing.toLowerCase() !== term.toLowerCase())
+  try { localStorage.setItem(searchHistoryKey, JSON.stringify([term, ...recent].slice(0, 6))) } catch {}
+}
+
+function searchRoute(query) {
+  return '/search' + (query ? '?' + new URLSearchParams({ q: query }) : '')
+}
+
+function searchPage(url, signal, focus) {
+  const query = (url.searchParams.get('q') ?? '').trim().slice(0, 100)
+  routeLabel('Search')
+  paint('<div class="section-head"><h1>Search</h1></div>' +
+    '<form class="search-form" action="/search" role="search">' + searchIcon +
+    '<input name="q" type="search" aria-label="Search movies and series" maxlength="100" placeholder="Search movies and series" value="' +
+    escape(query) + '"></form><div id="search-results"><p class="sr-only" role="status"></p><div></div></div>', signal)
+  const form = main.querySelector('.search-form')
+  const input = form.elements.q
+  const results = main.querySelector('#search-results')
+  const status = results.firstElementChild
+  const body = results.lastElementChild
+  let timer
+  let request
+
+  function showRecent() {
+    const recent = recentSearches()
+    body.innerHTML = recent.length ? '<section class="recent-search"><div><h2>Recent searches</h2><button type="button" data-clear-search>Clear</button></div><ul>' +
+      recent.map(term => '<li><a data-route href="' + escape(routeTarget(searchRoute(term))) + '">' + escape(term) + '</a></li>').join('') +
+      '</ul></section>' : ''
+  }
+
+  async function update() {
+    request?.abort()
+    const term = input.value.trim()
+    if (currentRoute !== searchRoute(term)) {
+      currentRoute = searchRoute(term)
+      history.replaceState(history.state, '', routeTarget(currentRoute))
+    }
+    if (!term) {
+      status.textContent = ''
+      return showRecent()
+    }
+    request = new AbortController()
+    const querySignal = AbortSignal.any([signal, request.signal])
+    status.textContent = 'Searching…'
+    body.innerHTML = '<ul class="grid skeleton" aria-hidden="true">' + skeletonPosters + '</ul>'
+    try {
+      const data = await cachedCatalogue('search:' + term, () => search(term, querySignal))
+      if (querySignal.aborted) return
+      const count = data.items.length
+      status.textContent = count + (count === 1 ? ' result' : ' results')
+      body.innerHTML = count ? '<ul class="grid">' + data.items.map((item, index) =>
+        card(item, { eager: index < 6, showKind: true })).join('') + '</ul>' : message('No titles found', 'Try another title.')
+    } catch (error) {
+      if (querySignal.aborted) return
+      status.textContent = ''
+      body.innerHTML = message('Search unavailable', error.message, retryButton)
     }
   }
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer)
+    request?.abort()
+    timer = setTimeout(update, input.value.trim() ? 260 : 0)
+  }, { signal })
+  form.addEventListener('submit', event => {
+    event.preventDefault()
+    clearTimeout(timer)
+    rememberSearch(input.value.trim())
+    void update()
+  }, { signal })
+  results.addEventListener('click', event => {
+    if (event.target.closest('[data-clear-search]')) {
+      try { localStorage.removeItem(searchHistoryKey) } catch {}
+      showRecent()
+      input.focus({ preventScroll: true })
+    }
+    if (event.target.closest('.title-card')) rememberSearch(new URL(currentRoute, location.origin).searchParams.get('q'))
+  }, { signal })
+  signal.addEventListener('abort', () => {
+    clearTimeout(timer)
+    request?.abort()
+  }, { once: true })
+  if (focus) input.focus({ preventScroll: true })
+  return update()
 }
 
 function titleLink(item) {
@@ -279,9 +487,11 @@ function details(item) {
   routeLabel(item.title)
   const { button, seasons } = episodes(item)
   const returnTo = history.state?.returnTo ?? '/'
+  const returnUrl = new URL(returnTo, location.origin)
+  const returnLabel = { search: 'Search results', movie: 'Movies', series: 'Series', home: 'Home' }[destination(returnUrl)]
   return '<a class="return-link" data-route data-restore href="' + escape(routeTarget(returnTo)) + '">' +
-    icon('back') + (returnTo.startsWith('/search') ? 'Search results' : 'Browse') + '</a>' +
-    '<section class="title-layout"><div class="poster detail-poster">' + artwork(item, true) +
+    icon('back') + returnLabel + '</a>' +
+    '<section class="title-layout"><div class="poster detail-poster">' + artwork(item, { eager: true, sizes: '(min-width: 671px) 260px, 29vw' }) +
     '</div><div class="title-info"><h1>' + escape(item.title) +
     '</h1><p class="meta">' + metadata(item, true) + '</p>' +
     (item.description ? '<p class="synopsis">' + escape(item.description) + '</p>' : '') +
@@ -1085,7 +1295,14 @@ async function startPlayback(item, episode, signal, autoplay) {
   }
 }
 
-async function render(focus = false, autoplay = false) {
+function destination(url) {
+  if (url.pathname === '/search') return 'search'
+  const kind = url.searchParams.get('kind')
+  if (kinds.has(kind)) return kind
+  return url.searchParams.has('page') || url.searchParams.has('genre') ? 'movie' : 'home'
+}
+
+async function render(focus = false, autoplay = false, focusSearch = false) {
   navigation?.abort()
   if (circleTab && !currentRoute.startsWith('/watch/')) {
     location.replace(routeTarget(currentRoute))
@@ -1094,8 +1311,10 @@ async function render(focus = false, autoplay = false) {
   navigation = new AbortController()
   const { signal } = navigation
   const url = new URL(currentRoute, location.origin)
+  const browsing = url.pathname === '/' || url.pathname === '/search'
+  const active = browsing ? destination(url) : destination(new URL(history.state?.returnTo ?? '/', location.origin))
   for (const link of document.querySelectorAll('[data-nav]')) {
-    if (link.dataset.nav === (url.pathname === '/search' ? 'search' : 'browse')) link.setAttribute('aria-current', 'page')
+    if (link.dataset.nav === active) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
 
@@ -1104,11 +1323,12 @@ async function render(focus = false, autoplay = false) {
     main.focus({ preventScroll: true })
   }
 
-  if (url.pathname === '/' || url.pathname === '/search') return list(url, signal)
+  if (active === 'search' && browsing) return searchPage(url, signal, focusSearch)
+  if (browsing) return active === 'home' ? home(signal) : list(url, signal)
 
   const [, mode, kind, id] = url.pathname.split('/')
   if (!['title', 'watch'].includes(mode) || !kinds.has(kind) || !imdbId.test(id ?? '')) {
-    return paint(message('Page not found', 'Open Browse or Search to find a title.'), signal)
+    return paint(message('Page not found', 'Open Home or Search to find a title.'), signal)
   }
   paint('<p class="route-loading" role="status">Loading title…</p>', signal)
   try {
@@ -1134,14 +1354,21 @@ async function render(focus = false, autoplay = false) {
   }
 }
 
-function go(href) {
-  if (href === currentRoute) return
+function savePosition() {
   scrollPositions.set(currentRoute, window.scrollY)
+  for (const track of main.querySelectorAll('[data-shelf]')) {
+    shelfPositions.set(track.dataset.shelf, track.scrollLeft)
+  }
+}
+
+function go(href, focusSearch = false) {
+  if (href === currentRoute) return
+  savePosition()
   const route = new URL(currentRoute, location.origin)
   const returnTo = route.pathname === '/' || route.pathname === '/search' ? currentRoute : history.state?.returnTo
   history.pushState({ returnTo }, '', routeTarget(href))
   currentRoute = href
-  return render(true, href.startsWith('/watch/'))
+  return render(true, href.startsWith('/watch/'), focusSearch)
 }
 
 document.addEventListener('click', event => {
@@ -1151,29 +1378,15 @@ document.addEventListener('click', event => {
       event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   const href = hosted ? link.hash.slice(1) : link.pathname + link.search
-  void go(href)?.then(() => {
+  const focusSearch = href === '/search' || link.closest('.recent-search') !== null
+  if (focusSearch && href === currentRoute) main.querySelector('input[name="q"]')?.focus({ preventScroll: true })
+  void go(href, focusSearch)?.then(() => {
     if (currentRoute !== href) return
     if (link.hasAttribute('data-restore')) window.scrollTo(0, scrollPositions.get(href) ?? 0)
-    if (href === '/search') main.querySelector('input[name="q"]')?.focus({ preventScroll: true })
   })
 })
-main.addEventListener('submit', event => {
-  if (!event.target.matches('.search-form')) return
-  event.preventDefault()
-  const query = new FormData(event.target).get('q').trim()
-  go('/search' + (query ? '?' + new URLSearchParams({ q: query }) : ''))
-})
-
-main.addEventListener('change', event => {
-  if (!event.target.matches('select[name="genre"]')) return
-  const params = new URL(currentRoute, location.origin).searchParams
-  if (event.target.value) params.set('genre', event.target.value)
-  else params.delete('genre')
-  params.delete('page')
-  go('/' + (params.size ? '?' + params : ''))
-})
 window.addEventListener('popstate', () => {
-  scrollPositions.set(currentRoute, window.scrollY)
+  savePosition()
   const href = readRoute()
   currentRoute = href
   void render(true).then(() => {

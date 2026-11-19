@@ -12,9 +12,6 @@ function image(value) {
   try {
     const url = new URL(value)
     if (url.protocol === 'https:' && artworkHosts.has(url.hostname) && !url.username && !url.password) {
-      if (url.hostname === 'images.metahub.space') {
-        url.pathname = url.pathname.replace('/poster/small/', '/poster/medium/')
-      }
       return url.href
     }
   } catch {}
@@ -31,7 +28,7 @@ function normalize(meta, kind) {
   if (!imdbId.test(meta?.id) || !string(meta.name)) return null
   const year = /\b(?:19|20)\d{2}\b/.exec(string(meta.releaseInfo ?? meta.year))?.[0] ?? ''
   return {
-    id: meta.id, kind, title: string(meta.name), year, artwork: image(meta.poster), backdrop: image(meta.background),
+    id: meta.id, kind, title: string(meta.name), year, artwork: image(meta.poster),
     description: string(meta.description, 1800), duration: string(meta.runtime, 32),
     genres: (Array.isArray(meta.genres) ? meta.genres : []).slice(0, 3).map(value => string(value, 40)).filter(Boolean)
   }
@@ -51,6 +48,63 @@ export async function browse(options) {
   const items = await list(options.kind, options)
   return { items: items.slice(0, pageSize), hasNext: items.length > pageSize }
 }
+
+function picks(kind, entries) {
+  return entries.map(([id, title]) => ({
+    id, kind, title, artwork: 'https://images.metahub.space/poster/small/' + id + '/img'
+  }))
+}
+
+export const featured = picks('movie', [
+  ['tt0118694', 'In the Mood for Love'],
+  ['tt27503384', 'Perfect Days'],
+  ['tt13238346', 'Past Lives'],
+  ['tt0064116', 'Once Upon a Time in the West']
+])
+
+export const collections = [
+  {
+    key: 'top-rated',
+    label: 'Top Rated Movies',
+    // Selections from the IMDb Top 250 without claiming their current chart positions.
+    items: picks('movie', [
+      ['tt0111161', 'The Shawshank Redemption'], ['tt0068646', 'The Godfather'],
+      ['tt0468569', 'The Dark Knight'], ['tt0071562', 'The Godfather Part II'],
+      ['tt0050083', '12 Angry Men'], ['tt0108052', "Schindler's List"],
+      ['tt0167260', 'The Lord of the Rings: The Return of the King'], ['tt0110912', 'Pulp Fiction'],
+      ['tt0120737', 'The Lord of the Rings: The Fellowship of the Ring'], ['tt0137523', 'Fight Club'],
+      ['tt0109830', 'Forrest Gump'], ['tt1375666', 'Inception']
+    ])
+  },
+  {
+    key: 'animation',
+    label: 'Animation',
+    items: [
+      ...picks('movie', [
+        ['tt0245429', 'Spirited Away'], ['tt4633694', 'Spider-Man: Into the Spider-Verse'],
+        ['tt0910970', 'WALL·E'], ['tt5311514', 'Your Name.'], ['tt0114709', 'Toy Story'],
+        ['tt0382932', 'Ratatouille'], ['tt1049413', 'Up']
+      ]),
+      ...picks('series', [
+        ['tt11126994', 'Arcane'], ['tt0417299', 'Avatar: The Last Airbender'],
+        ['tt13309742', 'Blue Eye Samurai'], ['tt0213338', 'Cowboy Bebop'],
+        ['tt2560140', 'Attack on Titan']
+      ])
+    ]
+  },
+  {
+    key: 'k-dramas',
+    label: 'K-Dramas',
+    items: picks('series', [
+      ['tt10850932', 'Crash Landing on You'], ['tt24640580', 'Moving'],
+      ['tt20869502', 'Extraordinary Attorney Woo'], ['tt6611916', 'Kingdom'],
+      ['tt21344706', 'The Glory'], ['tt14819828', 'Business Proposal'],
+      ['tt7923710', 'My Mister'], ['tt14518756', 'Hometown Cha-Cha-Cha'],
+      ['tt27668559', 'Queen of Tears'], ['tt11769304', 'Hospital Playlist'],
+      ['tt17513352', 'Twenty Five Twenty One']
+    ])
+  }
+]
 
 export async function search(query, signal) {
   const results = await Promise.allSettled([...kinds].map(kind => list(kind, { query, page: 1, signal })))
