@@ -304,6 +304,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
   let rangeCheck
   let rangeProbe
   let audioReported = false
+  let audioBufferPauses = 0
+  let videoBufferWaits = 0
   let seekDetails = []
 
   function formatTime(value) {
@@ -356,6 +358,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
       'Current position: ' + formatTime(video.currentTime) + ' / ' + formatTime(duration),
       'Audio: ' + (userMuted ? 'muted' : 'unmuted') + ', volume ' + Math.round(volumeLevel * 100) + '%',
       'Audio decoder: ' + (audioRecovery ?? 'native') + (audioFailure ? ' (' + audioFailure + ')' : ''),
+      'Buffer events: audio ' + audioBufferPauses + ', video ' + videoBufferWaits,
       'Decoded bytes: audio ' + (video.webkitAudioDecodedByteCount ?? 'unavailable') +
         ', video ' + (video.webkitVideoDecodedByteCount ?? 'unavailable'),
       'Audio tracks: ' + (tracks ? Array.from(tracks).filter(track => track.enabled).length +
@@ -469,7 +472,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
       syncPlayButton()
       if (decodedAudio) {
         request.waiting = true
-        void decodedAudio.ready(video.currentTime).then(ready => {
+        const position = pendingSeek?.applied ? pendingSeek.target : video.currentTime
+        void decodedAudio.ready(position).then(ready => {
           if (ready && playRequest === request) playVideo()
         })
       }
@@ -516,7 +520,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     pendingSeek.applied = true
     pendingSeek.target = Math.min(pendingSeek.target, video.duration)
     if (audioContext && audioRecovery !== 'native' && !userMuted && volumeLevel > 0) video.pause()
-    decodedAudio?.prime(pendingSeek.target)
+    decodedAudio?.prime(pendingSeek.target, Math.abs(pendingSeek.target - pendingSeek.from) > 10)
     video.currentTime = pendingSeek.target
     if (pendingSeek.play) play()
     finishSeek()
@@ -641,7 +645,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=7')
+      audioModule = import('./browser-audio.js?v=8')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
@@ -732,6 +736,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
                 },
                 starved() {
                   if (video.paused || video.seeking) return
+                  audioBufferPauses++
+                  if (debug.open) renderDebug()
                   video.pause()
                   play()
                 },
@@ -789,6 +795,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
     else Array.from(video.audioTracks ?? []).forEach((track, index) => { track.enabled = index === Number(audioTrack.value) })
   }, { signal })
   video.addEventListener('waiting', () => {
+    if (!pendingSeek && !video.paused && !video.seeking) {
+      videoBufferWaits++
+      if (debug.open) renderDebug()
+    }
     if (pendingSeek || (!video.paused && !stalledSeek)) showBuffering()
   }, { signal })
   for (const event of ['play', 'pause', 'ended']) {

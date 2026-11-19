@@ -1,6 +1,6 @@
 const audioPackage = 'https://cdn.jsdelivr.net/npm/'
 const maxRangeSize = 512 * 1024
-const readsPerBatch = 4
+const readsPerBatch = 2
 const headerSize = 128 * 1024
 const initialAudioBuffer = 0.4
 const refillAudioBuffer = 2.5
@@ -83,11 +83,13 @@ export async function openBrowserAudio(source, checkRange, signal) {
     throw new Error('Install the Screen Room script from Circle web player setup in Via.')
   }
   const { Input, MATROSKA, UrlSource, CustomSource, AudioBufferSink } = bunny
-  const data = via ? new CustomSource(via) :
-    new UrlSource(source, {
+  const createInput = () => new Input({
+    formats: [MATROSKA],
+    source: via ? new CustomSource(via) : new UrlSource(source, {
       requestInit: { credentials: 'omit', redirect: 'error' }, maxCacheSize: 16 * 1024 * 1024
     })
-  const input = new Input({ formats: [MATROSKA], source: data })
+  })
+  let input = createInput()
   signal.addEventListener('abort', () => input.dispose(), { once: true })
   try {
     const [tracks, primary] = await Promise.all([input.getAudioTracks(), input.getPrimaryAudioTrack()])
@@ -95,7 +97,7 @@ export async function openBrowserAudio(source, checkRange, signal) {
       const [codec, name, language, disposition] = await Promise.all([
         track.getCodec(), track.getName(), track.getLanguageCode(), track.getDisposition()
       ])
-      return { track, index, codec, name, language, disposition, primary: track === primary }
+      return { index, codec, name, language, disposition, primary: track === primary }
     })))
     signal.throwIfAborted()
     return {
@@ -103,7 +105,20 @@ export async function openBrowserAudio(source, checkRange, signal) {
       async decoder(choice) {
         await prepareDecoder(choice.codec, bunny)
         signal.throwIfAborted()
-        return await choice.track.canDecode() ? new AudioBufferSink(choice.track) : null
+        const track = (await input.getAudioTracks())[choice.index]
+        if (!(await track?.canDecode())) return null
+        return {
+          restart() {
+            // Dispose the prefetch workers so a distant seek does not queue behind the old ranges.
+            input.dispose()
+            input = createInput()
+          },
+          async *buffers(position) {
+            const current = input
+            const currentTrack = (await current.getAudioTracks())[choice.index]
+            yield* new AudioBufferSink(currentTrack).buffers(position)
+          }
+        }
       }
     }
   } catch (error) {
@@ -116,8 +131,8 @@ export function viaSource(source, readMedia, signal) {
   let size
   let header
 
-  async function readRange(start, end) {
-    const { headers, bytes } = await readMedia(source, start, end, signal)
+  async function readRange(start, end, requestSignal = signal) {
+    const { headers, bytes } = await readMedia(source, start, end, requestSignal)
     const reported = /^content-range:\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/mi.exec(headers)
     const total = Number(reported?.[3])
     if (Number(reported?.[1]) !== start || Number(reported?.[2]) !== end - 1 ||
@@ -125,7 +140,31 @@ export function viaSource(source, readMedia, signal) {
       throw new Error('The file server returned a different byte range.')
     }
     size = total
-    return new Uint8Array(bytes)
+    const data = new Uint8Array(bytes)
+    if (header?.length === start && end <= maxRangeSize) {
+      const prefix = new Uint8Array(end)
+      prefix.set(header)
+      prefix.set(data, start)
+      header = prefix
+    }
+    return data
+  }
+
+  async function* readChunks(start, end, requestSignal) {
+    const cachedEnd = Math.min(header?.length ?? 0, end)
+    if (start < cachedEnd) yield header.subarray(start, cachedEnd)
+    for (let base = Math.max(start, cachedEnd); base < end; base += readsPerBatch * maxRangeSize) {
+      requestSignal.throwIfAborted()
+      const count = Math.min(readsPerBatch, Math.ceil((end - base) / maxRangeSize))
+      const batch = Array.from({ length: count }, (_, index) => {
+        const offset = base + index * maxRangeSize
+        const request = readRange(offset, Math.min(offset + maxRangeSize, end), requestSignal)
+        void request.catch(() => {})
+        return request
+      })
+      // Give the parser the first range without waiting for speculative ranges to finish.
+      for (const request of batch) yield await request
+    }
   }
 
   return {
@@ -143,19 +182,27 @@ export function viaSource(source, readMedia, signal) {
       }
       return size
     },
-    async read(start, end) {
-      const data = new Uint8Array(end - start)
-      const cachedEnd = Math.min(header?.length ?? 0, end)
-      if (start < cachedEnd) data.set(header.subarray(start, cachedEnd))
-      for (let base = Math.max(start, cachedEnd); base < end; base += readsPerBatch * maxRangeSize) {
-        const count = Math.min(readsPerBatch, Math.ceil((end - base) / maxRangeSize))
-        await Promise.all(Array.from({ length: count }, async (_, index) => {
-          const offset = base + index * maxRangeSize
-          const limit = Math.min(offset + maxRangeSize, end)
-          data.set(await readRange(offset, limit), offset - start)
-        }))
-      }
-      return data
+    read(start, end) {
+      const controller = new AbortController()
+      const chunks = readChunks(start, end, AbortSignal.any([signal, controller.signal]))
+      return new ReadableStream({
+        async pull(stream) {
+          try {
+            const { done, value } = await chunks.next()
+            if (controller.signal.aborted) return
+            if (done) stream.close()
+            else stream.enqueue(value)
+          } catch (error) {
+            if (controller.signal.aborted) return
+            controller.abort()
+            stream.error(error)
+          }
+        },
+        cancel() {
+          controller.abort()
+          void chunks.return().catch(() => {})
+        }
+      })
     }
   }
 }
@@ -221,8 +268,9 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     job = undefined
   }
 
-  function prime(position) {
+  function prime(position, restartReader = false) {
     reset()
+    if (restartReader) sink.restart()
     job = readBuffers(sink, position)
     void fillAudio(job, position + initialAudioBuffer * video.playbackRate).catch(() => {})
   }
