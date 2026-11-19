@@ -12,7 +12,8 @@ const assets = new Map([
   ['/playback.js', 'text/javascript; charset=utf-8'],
   ['/style.css', 'text/css; charset=utf-8'],
   ['/mark.svg', 'image/svg+xml'],
-  ['/inter.woff2', 'font/woff2']
+  ['/inter.woff2', 'font/woff2'],
+  ['/newsreader.woff2', 'font/woff2']
 ].map(([path, type]) => [path, { type, bytes: readFileSync(new URL('./public' + path, import.meta.url)) }]))
 const index = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8')
   .replaceAll('href="./', 'href="/').replaceAll('src="./', 'src="/')
