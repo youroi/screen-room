@@ -77,7 +77,7 @@ export async function title(kind, id, signal) {
       const episodes = seasons.get(season)
       if (!episodes.has(episode)) episodes.set(episode, {
         key: season + '-' + episode, season, number: episode,
-        title: string(video.name) || 'Episode ' + episode
+        title: string(video.name) || 'Episode ' + episode, artwork: image(video.thumbnail)
       })
     }
   }
