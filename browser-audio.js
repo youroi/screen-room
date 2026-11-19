@@ -3,6 +3,7 @@ const maxRangeSize = 512 * 1024
 const readsPerBatch = 4
 const headerSize = 128 * 1024
 const initialAudioBuffer = 0.4
+const refillAudioBuffer = 2.5
 const audioReadAhead = 4
 const decoderLoads = new Map()
 const warmStarts = new WeakMap()
@@ -128,7 +129,7 @@ export function viaSource(source, readMedia, signal) {
   }
 
   return {
-    prefetchProfile: 'fileSystem', maxCacheSize: 8 * 1024 * 1024,
+    prefetchProfile: 'network', maxCacheSize: 8 * 1024 * 1024,
     async getSize() {
       if (size === undefined) {
         // The first range provides both the file size and the MKV headers.
@@ -234,8 +235,10 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
   async function ready(position) {
     const current = bufferAt(position)
     try {
-      await fillAudio(current, position + initialAudioBuffer * video.playbackRate)
+      const lead = current.refilling ? refillAudioBuffer : initialAudioBuffer
+      await fillAudio(current, position + lead * video.playbackRate)
       if (job !== current || signal.aborted) return false
+      current.refilling = false
       if (current.entries.length || position >= video.duration - 1) return true
       failed(new Error('No audio samples at this position.'))
     } catch (error) {
@@ -270,6 +273,7 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
         }).finally(() => { current.filling = false })
       }
       if (level > 0 && !current.done && current.end < now + 0.12 * rate) {
+        current.refilling = true
         starved()
         return
       }

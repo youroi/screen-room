@@ -641,7 +641,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=6')
+      audioModule = import('./browser-audio.js?v=7')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
