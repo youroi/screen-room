@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#181521">
+  <meta name="theme-color" content="#171918">
   <title>Screen Room</title>
   <link rel="icon" href="./mark.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./style.css?v=10">
-  <script type="module" src="./app.js?v=18"></script>
+  <link rel="stylesheet" href="./style.css?v=11">
+  <script type="module" src="./app.js?v=19"></script>
 </head>
 <body>
   <a href="#main" class="skip">Skip to content</a>
@@ -19,11 +19,24 @@
       </a>
       <nav class="main-nav" aria-label="Main">
         <a href="/" data-route data-nav="browse">Browse</a>
-        <a href="/search" data-route data-nav="search"><span class="search-icon" aria-hidden="true"></span>Search</a>
+        <a class="header-search" href="/search" data-route data-nav="search"><span class="search-icon" aria-hidden="true"></span>Search</a>
       </nav>
     </div>
   </header>
   <main id="main" class="shell" tabindex="-1"></main>
   <noscript><p class="shell">Enable JavaScript to browse and play titles.</p></noscript>
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <a class="wordmark" href="/" data-route>
+        <span class="wordmark-mark" aria-hidden="true"></span>
+        <span>Screen Room</span>
+      </a>
+      <nav aria-label="Footer">
+        <a href="/?kind=movie" data-route>Movies</a>
+        <a href="/?kind=series" data-route>Series</a>
+        <a href="./web-play.html" data-player-help>Player setup</a>
+      </nav>
+    </div>
+  </footer>
 </body>
 </html>

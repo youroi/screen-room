@@ -93,3 +93,14 @@ The Watch player SHALL expose seeking, ten-second jumps, speed, volume, audio tr
 
 - **WHEN** the viewport is narrow
 - **THEN** the main controls remain reachable and secondary controls open in a disclosure
+
+### Requirement: Featured catalogue gallery
+
+The unfiltered first Browse page SHALL offer a gallery of titles with landscape artwork from the current Movies or Series catalogue.
+
+#### Scenario: A visitor changes the highlighted title
+
+- **WHEN** the visitor swipes or uses the gallery controls
+- **THEN** the gallery brings the selected title into view
+- **AND** its detail link opens the corresponding title page
+- **AND** the gallery advances only through visitor interaction
