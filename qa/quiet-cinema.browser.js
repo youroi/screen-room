@@ -63,7 +63,7 @@ async page => {
   await page.clock.fastForward(15_000)
   check(await firstTitle.textContent() === 'Once Upon a Time in the West', 'Back preserves the rotation preference')
 
-  const drama = page.locator('[data-shelf="k-dramas"] a').first()
+  const drama = page.locator('[data-shelf="k-dramas"]').getByRole('link', { name: 'Crash Landing on You' })
   await drama.scrollIntoViewIfNeeded()
   const discoveryScroll = await page.evaluate(() => scrollY)
   await drama.click()

@@ -7,5 +7,5 @@
 ## 2. Verify
 
 - [x] Test weekly rank, regional release types, dub scope, and snapshot retention.
-- [ ] Verify the rendered rows and existing browsing in Chromium.
-- [ ] Run the first refresh and verify the live Pages build.
+- [x] Verify the rendered rows and existing browsing in Chromium.
+- [x] Run the first refresh and verify the live Pages build.

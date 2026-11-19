@@ -35,7 +35,7 @@ jobs:
           ref: gh-pages
           path: .published
       - if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
       - name: Refresh and retain the validated snapshot
@@ -53,7 +53,7 @@ jobs:
           if test -f .published/catalogue-snapshot.json; then
             cp .published/catalogue-snapshot.json public/catalogue-snapshot.json
           fi
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: public
 
@@ -67,5 +67,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
         id: deployment
