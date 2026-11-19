@@ -52,8 +52,14 @@ function readRoute() {
 }
 
 function routeTarget(path) {
+  if (!hosted) return path
   if (circleTab && !path.startsWith('/watch/')) return publicHome + '#' + path
-  return hosted ? '#' + path : path
+  if (!circleTab && path.startsWith('/watch/')) {
+    const player = new URL('/api/posts?searchTerm=screen-room-browser&limit=1', circleWebOrigins[0])
+    player.hash = path
+    return player.href
+  }
+  return '#' + path
 }
 
 function itemRoute(mode, item) {
@@ -837,11 +843,9 @@ async function startPlayback(item, episode, signal, autoplay) {
   const watchPage = main.querySelector('.route-enter')
   const state = watchPage.querySelector('.player-state')
   if (hosted && !circleTab) {
-    const player = new URL('/api/posts?searchTerm=screen-room-browser&limit=1', circleWebOrigins[0])
-    player.hash = currentRoute
     state.innerHTML = '<div><p>Playback needs a connection that can reach Circle.</p><div class="player-state-actions">' +
-      '<a class="button primary" href="' + escape(player.href) + '" target="_blank" rel="noopener noreferrer">' +
-      playIcon + 'Play on Circle</a><a class="button quiet" href="' + escape(webPlayerHelp + player.hash) +
+      '<a class="button primary" href="' + escape(routeTarget(currentRoute)) + '" rel="noreferrer">' +
+      playIcon + 'Play on Circle</a><a class="button quiet" href="' + escape(webPlayerHelp + '#' + currentRoute) +
       '">Player setup</a></div></div>'
     return
   }
