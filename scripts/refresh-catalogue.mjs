@@ -15,17 +15,21 @@ function publicReleaseDates(market, today) {
   })
 }
 
-export function latestRelease(releases, today) {
+export function latestRelease(releases, today, availableDigitally = () => true) {
   for (const region of regions) {
     const market = releases.find(entry => entry.iso_3166_1 === region)
     const dates = publicReleaseDates(market, today).sort((a, b) => a.date.localeCompare(b.date))
     const theatrical = dates.find(entry => entry.type === 'theatrical')
-    const digital = dates.find(entry => entry.type === 'digital')
+    const digital = dates.find(entry => entry.type === 'digital' && availableDigitally(region))
     // Keep a first digital debut after theatrical opening while ignoring later re-releases.
     const chosen = digital && (!theatrical || digital.date >= theatrical.date) ? digital : theatrical
     if (chosen) return { region, releasedOn: chosen.date, releaseType: chosen.type }
   }
   return null
+}
+
+function hasDigitalProvider(market) {
+  return ['flatrate', 'free', 'ads', 'rent', 'buy'].some(type => Array.isArray(market?.[type]) && market[type].length)
 }
 
 export function hasReleasedEpisode(details, today) {
@@ -163,9 +167,18 @@ export async function buildSnapshot(request, now = new Date(), readPopular = pop
   const candidates = [...new Map(markets.flat().map(candidate => [candidate.id, candidate])).values()]
   const releases = await inBatches(candidates, async candidate => {
     const details = await movie(candidate.id)
-    const release = latestRelease(rows(details.release_dates, 'TMDB release dates'), today)
+    const markets = rows(details.release_dates, 'TMDB release dates')
+    let release = latestRelease(markets, today)
     const item = entry(candidate, details.external_ids?.imdb_id ?? details.imdb_id, 'movie')
-    return item && release && release.releasedOn >= from ? { ...item, ...release } : null
+    if (!item || !release || release.releasedOn < from) return null
+    if (release.releaseType === 'digital') {
+      const providers = await request('/movie/' + candidate.id + '/watch/providers')
+      if (!providers?.results || typeof providers.results !== 'object' || Array.isArray(providers.results)) {
+        throw new Error('TMDB returned invalid digital provider data.')
+      }
+      release = latestRelease(markets, today, region => hasDigitalProvider(providers.results[region]))
+    }
+    return release && release.releasedOn >= from ? { ...item, ...release } : null
   })
   const latest = unique(releases).sort((a, b) =>
     b.releasedOn.localeCompare(a.releasedOn) || Number(trendIds.has(a.id)) - Number(trendIds.has(b.id))
@@ -173,7 +186,7 @@ export async function buildSnapshot(request, now = new Date(), readPopular = pop
   if (![trending, latest, popularMovies, popularSeries].every(items => items.length)) {
     throw new Error('The refresh did not confirm releases for every catalogue row.')
   }
-  return { version: 2, generatedAt: now.toISOString(), popularMovies, popularSeries, trending, latest }
+  return { version: 3, generatedAt: now.toISOString(), popularMovies, popularSeries, trending, latest }
 }
 
 export async function refreshSnapshot(path, request, now) {

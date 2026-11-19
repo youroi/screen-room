@@ -19,7 +19,7 @@ npm test
 
 The `Publish catalogue` GitHub Actions workflow refreshes Trending, Popular, and Latest at 10:23 UTC daily. It reads the API Read Access Token from the `TMDB_READ_TOKEN` Actions secret. Run the workflow with its refresh option enabled for an immediate update. A failed refresh leaves the previous validated snapshot in place. A code-only deployment copies that snapshot from `gh-pages` into the Pages artifact.
 
-Movies qualify on a regular theatrical release or digital debut, and series qualify when a full episode has aired. Latest Releases uses the newest qualifying debut in Bangladesh, India, or the United States, in that market preference order. The Top Rated row uses the [IMDb chart snapshot from 15 November 2026](https://movies.rankhistory.fyi/250/history/2026/11/15) in chart order.
+Movies qualify on a regular theatrical release or digital debut, and series qualify when a full episode has aired. Latest Releases uses the newest qualifying debut in Bangladesh, India, or the United States, in that market preference order. A digital debut in Latest also needs a regional JustWatch provider listing. The Top Rated row uses the [IMDb chart snapshot from 15 November 2026](https://movies.rankhistory.fyi/250/history/2026/11/15) in chart order.
 
 Edit `public/hindi-dubs.js` to add verified dubs. Use an official movie source or a source for each confirmed season. The record affects catalogue order and has no bearing on a file's audio tracks.
 

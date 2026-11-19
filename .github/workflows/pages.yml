@@ -41,7 +41,7 @@ jobs:
           REQUESTED: ${{ inputs.refresh }}
         run: |
           if [ "$EVENT" = schedule ] || [ "$REQUESTED" = true ] ||
-             ! jq -e '.version == 2' .published/catalogue-snapshot.json > /dev/null 2>&1; then
+             ! jq -e '.version == 3' .published/catalogue-snapshot.json > /dev/null 2>&1; then
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
       - if: steps.refresh.outputs.needed == 'true'

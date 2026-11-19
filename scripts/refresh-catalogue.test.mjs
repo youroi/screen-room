@@ -27,6 +27,9 @@ test('regular theatrical and digital releases count and advance screenings do no
   assert.deepEqual(latestRelease([
     release('BD', [3, '2026-09-20'], [4, '2026-11-17']), release('IN', [4, '2026-11-18'])
   ], '2026-11-19'), { region: 'BD', releasedOn: '2026-11-17', releaseType: 'digital' })
+  assert.deepEqual(latestRelease([
+    release('BD', [3, '2026-11-16'], [4, '2026-11-19'])
+  ], '2026-11-19', () => false), { region: 'BD', releasedOn: '2026-11-16', releaseType: 'theatrical' })
 })
 
 function tvEpisode(air_date, season_number = 1) {
@@ -40,10 +43,10 @@ test('series require a full released episode', () => {
   assert.equal(hasReleasedEpisode({ first_air_date: '2026-11-01' }, '2026-11-19'), false)
 })
 
-test('weekly and popular skip upcoming titles while Latest accepts regular releases', async () => {
+test('weekly and popular skip upcoming titles while Latest requires a provider for digital dates', async () => {
   const movies = [
     film(1, 'First'), film(2, 'Early preview'), film(3, 'Regular theatrical'),
-    film(4, 'Digital debut'), film(5, 'Upcoming')
+    film(4, 'Digital debut'), film(5, 'Upcoming'), film(8, 'Unconfirmed digital listing')
   ]
   const series = [{ ...film(6, 'Upcoming series'), media_type: 'tv' }, { ...film(7, 'On air'), media_type: 'tv' }]
   const imdb = id => 'tt000000' + id
@@ -66,7 +69,11 @@ test('weekly and popular skip upcoming titles while Latest accepts regular relea
     if (path.startsWith('/find/')) {
       assert.equal(params.external_source, 'imdb_id')
       const id = Number(path.at(-1))
-      return { [id < 6 ? 'movie_results' : 'tv_results']: [{ id }] }
+      return { [id === 6 || id === 7 ? 'tv_results' : 'movie_results']: [{ id }] }
+    }
+    if (path.endsWith('/watch/providers')) {
+      const id = Number(path.split('/')[2])
+      return { results: { [id === 8 ? 'US' : 'IN']: { rent: [{ provider_id: 1 }] } } }
     }
     const id = Number(path.split('/').at(-1))
     if (path.startsWith('/tv/')) {
@@ -79,15 +86,16 @@ test('weekly and popular skip upcoming titles while Latest accepts regular relea
       2: [1, '2026-11-19'],
       3: [3, '2026-11-19'],
       4: [4, '2026-11-17'],
-      5: [3, '2026-12-18']
+      5: [3, '2026-12-18'],
+      8: [4, '2026-11-19']
     }
     return { imdb_id: imdb(id), release_dates: { results: [release('IN', dates[id])] } }
   }, now, async kind => (kind === 'movie' ? movies : series).map(item => ({
     id: imdb(item.id), title: item.title, kind, artwork: 'https://image.tmdb.org/t/p/w342/poster.jpg'
   })))
-  assert.equal(snapshot.version, 2)
+  assert.equal(snapshot.version, 3)
   assert.deepEqual(snapshot.trending.map(item => item.title), ['First', 'On air'])
-  assert.deepEqual(snapshot.popularMovies.map(item => item.title), ['First', 'Regular theatrical', 'Digital debut'])
+  assert.deepEqual(snapshot.popularMovies.map(item => item.title), ['First', 'Regular theatrical', 'Digital debut', 'Unconfirmed digital listing'])
   assert.deepEqual(snapshot.popularSeries.map(item => item.title), ['On air'])
   assert.deepEqual(snapshot.latest.map(item => item.title), ['Regular theatrical', 'First', 'Digital debut'])
   assert.deepEqual([...new Set(marketQueries)], ['BD:3', 'BD:4', 'IN:3', 'IN:4', 'US:3', 'US:4'])

@@ -133,7 +133,7 @@ export async function refreshedCollections(signal) {
   const response = await fetch(new URL('./catalogue-snapshot.json', import.meta.url), { signal, credentials: 'omit' })
   if (!response.ok) throw new Error('The catalogue snapshot is unavailable.')
   const data = await response.json()
-  if (data?.version !== 2 || ![data.popularMovies, data.popularSeries, data.trending, data.latest].every(Array.isArray)) {
+  if (data?.version !== 3 || ![data.popularMovies, data.popularSeries, data.trending, data.latest].every(Array.isArray)) {
     throw new Error('Invalid catalogue snapshot.')
   }
   return [

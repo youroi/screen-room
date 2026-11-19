@@ -1,4 +1,4 @@
-import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=6'
+import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=7'
 import { prioritizeHindi } from './hindi-dubs.js?v=1'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
@@ -339,7 +339,7 @@ async function home(signal) {
 
   try {
     const rows = await cachedCatalogue('catalogue-snapshot', () =>
-      refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(4000)])))
+      refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(8000)])))
     if (signal.aborted) return
     for (const { key } of popular) showPopular(key, rows.find(row => row.key === key)?.items ?? [])
     const refreshed = rows.filter(row => row.key === 'trending' || row.key === 'latest')
@@ -353,7 +353,8 @@ async function home(signal) {
     main.insertAdjacentHTML('beforeend', '<section class="catalogue-credits" aria-label="Credits">' +
       '<a href="https://www.themoviedb.org"><img src="' + escape(new URL('tmdb.svg', publicHome).href) +
       '" alt="TMDB" width="62" height="9" loading="lazy"></a>' +
-      '<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section>')
+      '<p>This product uses the TMDB API but is not endorsed or certified by TMDB. ' +
+      'Digital availability data provided by <a href="https://www.justwatch.com/">JustWatch</a>.</p></section>')
   } catch {
     if (signal.aborted) return
     if (hosted) {

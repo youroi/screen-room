@@ -9,9 +9,10 @@ Home SHALL display released weekly TMDB trends and recent regional public movie 
 - **WHEN** a valid snapshot is available
 - **THEN** Trending preserves weekly feed order after removing titles without a regular public release
 - **AND** Latest Releases sorts movies by confirmed regional regular theatrical or digital release date
+- **AND** a digital entry in Latest requires a streaming, rental, or purchase listing in the same market
 - **AND** upcoming titles, premieres, and previews do not qualify
 - **AND** the two rows preserve their source orders when a title qualifies in both
-- **AND** the app displays the approved TMDB logo and attribution notice
+- **AND** the app displays the approved TMDB logo and attributes TMDB and JustWatch
 
 #### Scenario: An upstream request fails
 
