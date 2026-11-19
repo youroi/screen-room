@@ -11,7 +11,6 @@ const assets = new Map([
   ['/catalogue.js', 'text/javascript; charset=utf-8'],
   ['/hindi-dubs.js', 'text/javascript; charset=utf-8'],
   ['/catalogue-snapshot.json', 'application/json; charset=utf-8'],
-  ['/tmdb.svg', 'image/svg+xml'],
   ['/playback.js', 'text/javascript; charset=utf-8'],
   ['/style.css', 'text/css; charset=utf-8'],
   ['/mark.svg', 'image/svg+xml'],
