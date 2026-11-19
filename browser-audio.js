@@ -80,7 +80,7 @@ export async function openBrowserAudio(source, checkRange, signal) {
   signal.throwIfAborted()
   if (!readMedia && !(range.status === 206 && range.range)) {
     if (range.ignored) throw new Error('The file server does not support byte ranges.')
-    throw new Error('Install the Screen Room script from Circle web player setup in Via.')
+    throw new Error('Open Player setup from the title page to install the Via script.')
   }
   const { Input, MATROSKA, UrlSource, CustomSource, AudioBufferSink } = bunny
   const createInput = () => new Input({
