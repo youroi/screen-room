@@ -1,5 +1,5 @@
 import { browse, search, title, imdbId, kinds } from './catalogue.js'
-import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=7'
+import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
 const circleTab = circleWebOrigins.includes(location.origin)
@@ -224,7 +224,6 @@ function watch(item, episode) {
     '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
     'Your browser may not support this stream’s audio format.</p>' +
     '<div class="playback-options" hidden><label hidden>Audio track <select id="audio-track"></select></label>' +
-    '<a class="button quiet" data-browser-audio target="_blank" rel="noopener" hidden>Browser audio</a>' +
     '<button class="button quiet" type="button" data-other-stream hidden>Try another stream</button></div>' +
     '<p id="stream-status" class="muted" role="status" hidden></p>' +
     '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre>' +
@@ -255,18 +254,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const testSound = debug.querySelector('[data-test-sound]')
   const soundResult = debug.querySelector('[data-sound-result]')
   const source = video.getAttribute('src')
-  const audioLink = main.querySelector('[data-browser-audio]')
   const audioSource = circleTab ? circleVideo(source) : null
-  if (audioSource && mediaType(audioSource) === 'video/x-matroska') {
-    const setAudioLink = () => {
-      const url = new URL('/', audioSource)
-      url.hash = new URLSearchParams({ 'screenroom-audio': audioSource.href, time: video.currentTime })
-      audioLink.href = url.href
-    }
-    setAudioLink()
-    audioLink.hidden = false
-    audioLink.addEventListener('click', setAudioLink, { signal })
-  }
+  const matroska = audioSource && mediaType(audioSource) === 'video/x-matroska'
+  let audioContext
+  let audioRecovery
+  let stopBrowserAudio
   let bufferTimer
   let seekTimer
   let scrubbing = false
@@ -411,6 +403,12 @@ function bindPlayer(signal, autoplay, reportAudio) {
   }
 
   function play() {
+    if (matroska && video.webkitAudioDecodedByteCount === 0 && !audioContext && typeof AudioContext === 'function') {
+      try {
+        audioContext = new AudioContext()
+        void audioContext.resume().catch(() => {})
+      } catch {}
+    }
     video.play().catch(error => {
       if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') failed()
     })
@@ -537,17 +535,42 @@ function bindPlayer(signal, autoplay, reportAudio) {
       updateTime()
     }, { signal })
   }
+  function audioRecoveryFailed(error) {
+    if (signal.aborted) return
+    audioRecovery = 'failed'
+    if (!video.webkitAudioDecodedByteCount) {
+      audioStatus.textContent = 'Browser audio could not start. ' + error.message
+      audioStatus.hidden = false
+    }
+  }
+
+  async function recoverAudio() {
+    audioRecovery = 'loading'
+    try {
+      const { enableBrowserAudio } = await import('./browser-audio.js?v=2')
+      signal.throwIfAborted()
+      stopBrowserAudio = await enableBrowserAudio(video, source, audioContext, signal, audioRecoveryFailed)
+      if (audioRecovery !== 'failed') audioRecovery = stopBrowserAudio ? 'active' : 'native'
+      if (audioRecovery === 'active') audioStatus.hidden = true
+    } catch (error) {
+      audioRecoveryFailed(error)
+    }
+  }
+
   function updateAudio() {
     if (video.muted || video.volume === 0) return
     const decoded = video.webkitAudioDecodedByteCount
     if (decoded > 0 && !audioReported) {
       audioReported = true
+      stopBrowserAudio?.()
       reportAudio?.('decoded')
     }
     const played = video.played
     if (!played.length || video.paused || video.seeking || pendingSeek || stalledSeek ||
         !video.webkitVideoDecodedByteCount) return
     const span = played.end(played.length - 1) - played.start(played.length - 1)
+    if (decoded === 0 && span >= 1 && audioContext && !audioRecovery) void recoverAudio()
+    if (audioRecovery === 'loading' || audioRecovery === 'active') return
     audioStatus.hidden = decoded !== 0 || span < 2
     if (decoded === 0 && span >= 4 && video.currentTime < 7) {
       reportAudio?.('silent')
@@ -584,6 +607,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   signal.addEventListener('abort', () => {
     clearTimeout(seekTimer)
     stopBuffering()
+    if (audioContext) void audioContext.close().catch(() => {})
     video.pause()
     video.removeAttribute('src')
     video.load()

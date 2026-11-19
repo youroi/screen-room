@@ -2,20 +2,31 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
 import { once } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
-import { browserAudioRoute, browserCircleStream, findCircleStream } from './public/playback.js'
+import { browserCircleStream, findCircleStream } from './public/playback.js'
 
-test('browser audio accepts only same-origin Circle MKV files', () => {
-  const origin = 'http://ftp16.circleftp.net'
-  const source = origin + '/Pilot%20S01E01.mkv'
-  const hash = '#' + new URLSearchParams({ 'screenroom-audio': source, time: '945' })
-  assert.deepEqual(browserAudioRoute({ origin, hash }), { source, time: 945 })
-  assert.equal(browserAudioRoute({ origin: 'http://new.circleftp.net:5000', hash }), null)
-  for (const url of ['http://example.org/a.mkv', origin + '/a.mp4']) {
-    assert.equal(browserAudioRoute({ origin: new URL(url).origin,
-      hash: '#' + new URLSearchParams({ 'screenroom-audio': url }) }), null)
-  }
+test('Via reads only bounded byte ranges of the current Circle MKV', async () => {
+  const source = 'http://ftp16.circleftp.net/Pilot%20S01E01.mkv'
+  const location = { href: 'http://new.circleftp.net:5000/api/posts?searchTerm=screen-room-browser' }
+  const window = {}
+  const document = { querySelector: selector => selector === '.player video' ? { currentSrc: source } : {} }
+  const calls = []
+  runInNewContext(readFileSync(new URL('./public/via-player.user.js', import.meta.url), 'utf8'), {
+    window, document, location, URL, ArrayBuffer, setTimeout, clearTimeout,
+    GM_xmlhttpRequest(request) {
+      calls.push(request)
+      request.onload({ status: 206, finalUrl: source, response: new ArrayBuffer(16), responseHeaders: '' })
+    }
+  })
+  const { signal } = new AbortController()
+  await assert.rejects(window.screenRoomReadMedia(source + '?different', 0, 16, signal), /approved Circle MKV/)
+  await assert.rejects(window.screenRoomReadMedia(source, 0, 1048576, signal), /Invalid media range/)
+  assert.equal((await window.screenRoomReadMedia(source, 1, 17, signal)).bytes.byteLength, 16)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].headers.Range, 'bytes=1-16')
 })
 
 async function listen(server, context) {

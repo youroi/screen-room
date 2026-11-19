@@ -42,15 +42,6 @@ export function circleVideo(value, allowedOrigins = new Set()) {
   return null
 }
 
-export function browserAudioRoute(location) {
-  if (!location.hash.startsWith('#screenroom-audio=')) return null
-  const params = new URLSearchParams(location.hash.slice(1))
-  const source = circleVideo(params.get('screenroom-audio'))
-  if (!source || source.origin !== location.origin || mediaType(source) !== 'video/x-matroska') return null
-  const time = Number(params.get('time'))
-  return { source: source.href, time: Number.isFinite(time) && time > 0 ? time : 0 }
-}
-
 function normalized(value) {
   return typeof value === 'string'
     ? value.normalize('NFKD').replace(/(\p{Script=Latin})\p{M}+/gu, '$1').normalize('NFC').toLowerCase()
