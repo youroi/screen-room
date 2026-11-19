@@ -1,11 +1,13 @@
-import { browserAudioRoute, circleWebOrigins } from './playback.js?v=8'
+import { circleWebOrigins } from './playback.js?v=9'
 
-const audio = browserAudioRoute(location)
-if (circleWebOrigins.includes(location.origin) || audio) {
+if (circleWebOrigins.includes(location.origin) && !document.querySelector('script[data-screen-room="app"]')) {
+  await openScreenRoom()
+}
+
+async function openScreenRoom() {
   try {
     const home = new URL('./', import.meta.url)
-    const page = audio ? new URL('browser-audio.html', home) : home
-    const response = await fetch(page, { credentials: 'omit', redirect: 'error', cache: 'no-cache' })
+    const response = await fetch(home, { credentials: 'omit', redirect: 'error', cache: 'no-cache' })
     if (!response.ok) throw new Error('Screen Room is unavailable')
     const shell = new DOMParser().parseFromString(await response.text(), 'text/html')
     const entry = shell.querySelector('script[type="module"][src]')
@@ -17,6 +19,7 @@ if (circleWebOrigins.includes(location.origin) || audio) {
     document.documentElement.replaceWith(document.importNode(shell.documentElement, true))
     const script = document.createElement('script')
     script.type = 'module'
+    script.dataset.screenRoom = 'app'
     script.src = app.href
     document.head.append(script)
   } catch {
