@@ -79,6 +79,12 @@ Screen Room SHALL prepare playable Circle MKV audio without waiting for native a
 - **THEN** the player prepares audio at the requested position while video seeks
 - **AND** resumes video when the selected audio is ready, keeping both on the video's playback clock
 
+#### Scenario: Decoded audio runs low during playback
+
+- **WHEN** the next browser-decoded audio samples are delayed
+- **THEN** the player briefly buffers both audio and video
+- **AND** it resumes from the same position using the buffered audio
+
 ### Requirement: Watch controls
 
 The Watch player SHALL expose seeking, ten-second jumps, speed, volume, audio track selection when available, and fullscreen.

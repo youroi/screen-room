@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
-import { orderAudioTracks, viaSource } from './public/browser-audio.js'
+import { orderAudioTracks, playDecodedAudio, viaSource } from './public/browser-audio.js'
 import { browserCircleStream, findCircleStream } from './public/playback.js'
 
 test('Via reads only bounded byte ranges of the current Circle MKV', async () => {
@@ -84,6 +84,52 @@ test('audio preference keeps Hindi ahead of the original, default and commentary
   ]
   assert.deepEqual(orderAudioTracks(tracks), [tracks[3], tracks[2], tracks[1], tracks[0]])
   assert.deepEqual(orderAudioTracks(tracks.slice(0, 3)), [tracks[2], tracks[1], tracks[0]])
+})
+
+test('decoded audio pauses before an underrun and reuses pending PCM to resume', { timeout: 2000 }, async t => {
+  const controller = new AbortController()
+  t.after(() => controller.abort())
+  const video = Object.assign(new EventTarget(), {
+    paused: true, currentTime: 0, playbackRate: 1, readyState: 4, duration: 2
+  })
+  const context = {
+    currentTime: 0,
+    createGain: () => ({ gain: {}, connect() {}, disconnect() {} }),
+    createBufferSource: () => ({ playbackRate: {}, connect() {}, start() {}, stop() {} })
+  }
+  const download = Promise.withResolvers()
+  const interrupted = Promise.withResolvers()
+  let readers = 0
+  const sink = {
+    async *buffers() {
+      readers++
+      for (let frame = 0; frame < 20; frame++) {
+        if (frame === 6) await download.promise
+        yield { timestamp: frame / 10, buffer: { duration: 0.1 } }
+      }
+    }
+  }
+  const audio = playDecodedAudio(video, sink, context, controller.signal, {
+    volume: 1,
+    started() {},
+    failed: interrupted.reject,
+    starved() {
+      video.paused = true
+      video.dispatchEvent(new Event('pause'))
+      interrupted.resolve()
+    }
+  })
+
+  assert.ok(await audio.ready(0))
+  video.paused = false
+  video.dispatchEvent(new Event('playing'))
+  video.currentTime = 0.54
+  await interrupted.promise
+  assert.ok(video.paused)
+
+  download.resolve()
+  assert.ok(await audio.ready(video.currentTime))
+  assert.equal(readers, 1)
 })
 
 async function listen(server, context) {

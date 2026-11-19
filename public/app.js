@@ -237,11 +237,10 @@ function watch(item, episode) {
     '<button type="button" id="mute" aria-label="Mute">' + icon('volume') + '</button>' +
     '<button type="button" id="settings-toggle" aria-label="Playback settings" title="Playback settings" aria-expanded="false" aria-controls="player-settings">' + icon('settings') + '</button>' +
     '<button type="button" id="fullscreen" aria-label="Fullscreen">' + icon('full') + '</button></div>' +
-    '<label class="player-volume"><span>Volume</span><input id="player-volume" type="range" min="0" max="1" step="0.05" value="1">' +
-    '<output for="player-volume" aria-hidden="true">100%</output></label>' +
     '<div class="player-settings-panel" id="player-settings" hidden><label hidden>Audio <select id="audio-track"></select></label>' +
     '<label>Speed <select id="playback-speed"><option value="0.75">0.75×</option><option value="1" selected>Normal</option>' +
     '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>' +
+    '<label>Volume <input id="player-volume" type="range" min="0" max="1" step="0.05" value="1"></label>' +
     '</div></div></div><p id="video-error" class="muted" role="status" hidden></p>' +
     '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
     'Your browser may not support this stream’s audio format.</p>' +
@@ -266,7 +265,6 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const time = main.querySelector('#time')
   const mute = main.querySelector('#mute')
   const volume = main.querySelector('#player-volume')
-  const volumeValue = volume.parentElement.querySelector('output')
   const speed = main.querySelector('#playback-speed')
   const settings = main.querySelector('#settings-toggle')
   const settingsPanel = main.querySelector('#player-settings')
@@ -643,7 +641,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=5')
+      audioModule = import('./browser-audio.js?v=6')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
@@ -731,6 +729,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
                   audioStatus.hidden = true
                   if (!audioReported) reportAudio?.('decoded')
                   audioReported = true
+                },
+                starved() {
+                  if (video.paused || video.seeking) return
+                  video.pause()
+                  play()
                 },
                 failed(error) {
                   attempt.abort()
@@ -840,7 +843,6 @@ function bindPlayer(signal, autoplay, reportAudio) {
     video.muted = muted || audioRecovery === 'loading' || audioRecovery === 'active'
     decodedAudio?.setVolume(muted ? 0 : volumeLevel)
     volume.value = volumeLevel
-    volumeValue.textContent = Math.round(volumeLevel * 100) + '%'
     if (muted) audioStatus.hidden = true
     mute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute')
     mute.innerHTML = icon(muted ? 'muted' : 'volume')
