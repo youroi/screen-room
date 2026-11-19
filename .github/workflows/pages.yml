@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh:
-        description: Refresh TMDB catalogue before publishing
+        description: Refresh the catalogue before publishing
         type: boolean
         default: true
 
@@ -34,12 +34,22 @@ jobs:
         with:
           ref: gh-pages
           path: .published
-      - if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
+      - name: Check whether to refresh
+        id: refresh
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.refresh }}
+        run: |
+          if [ "$EVENT" = schedule ] || [ "$REQUESTED" = true ] ||
+             ! jq -e '.version == 2' .published/catalogue-snapshot.json > /dev/null 2>&1; then
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.refresh.outputs.needed == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 24
       - name: Refresh and retain the validated snapshot
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
+        if: steps.refresh.outputs.needed == 'true'
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: |

@@ -1,4 +1,4 @@
-import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=5'
+import { browse, search, title, featured, collections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=6'
 import { prioritizeHindi } from './hindi-dubs.js?v=1'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
@@ -315,6 +315,18 @@ function shelf({ key, label, items }) {
     '</h2><div id="shelf-body-' + key + '">' + shelfTrack(key, items) + '</div></section>'
 }
 
+function showPopular(key, candidates) {
+  const items = prioritizeHindi(candidates.filter(item => item.artwork && !featured.some(pick => pick.id === item.id))).slice(0, 12)
+  const body = main.querySelector('#shelf-body-' + key)
+  body.innerHTML = items.length ? shelfTrack(key, items) : '<p class="row-status">No titles found.</p>'
+  if (items.length) body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
+}
+
+function unavailablePopular(key) {
+  main.querySelector('#shelf-body-' + key).innerHTML =
+    '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
+}
+
 async function home(signal) {
   routeLabel('')
   paint('<h1 class="sr-only">Home</h1>' + featuredTitles() +
@@ -325,30 +337,16 @@ async function home(signal) {
     track.scrollLeft = shelfPositions.get(track.dataset.shelf) ?? 0
   }
 
-  const loadPopular = Promise.all(popular.map(async ({ key }) => {
-    const body = main.querySelector('#shelf-body-' + key)
-    try {
-      const data = await cachedCatalogue([key, '', 1].join(':'), () => browse({ kind: key, page: 1, signal }))
-      if (signal.aborted) return
-      const items = prioritizeHindi(data.items.filter(item => item.artwork && !featured.some(pick => pick.id === item.id))).slice(0, 12)
-      body.innerHTML = items.length ? shelfTrack(key, items) : '<p class="row-status">No titles found.</p>'
-      if (body.firstElementChild.matches('[data-shelf]')) {
-        body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
-      }
-    } catch {
-      if (!signal.aborted) {
-        body.innerHTML = '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
-      }
-    }
-  }))
-
-  const loadRefresh = cachedCatalogue('catalogue-snapshot', () =>
-    refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(4000)]))
-  ).then(rows => {
-    if (signal.aborted || !rows.length) return
+  try {
+    const rows = await cachedCatalogue('catalogue-snapshot', () =>
+      refreshedCollections(AbortSignal.any([signal, AbortSignal.timeout(4000)])))
+    if (signal.aborted) return
+    for (const { key } of popular) showPopular(key, rows.find(row => row.key === key)?.items ?? [])
+    const refreshed = rows.filter(row => row.key === 'trending' || row.key === 'latest')
+    if (!refreshed.length) return
     const top = main.querySelector('#shelf-top-rated').parentElement
-    top.insertAdjacentHTML('beforebegin', rows.map(shelf).join(''))
-    for (const { key } of rows) {
+    top.insertAdjacentHTML('beforebegin', refreshed.map(shelf).join(''))
+    for (const { key } of refreshed) {
       const track = main.querySelector('[data-shelf="' + key + '"]')
       track.scrollLeft = shelfPositions.get(key) ?? 0
     }
@@ -356,8 +354,22 @@ async function home(signal) {
       '<a href="https://www.themoviedb.org"><img src="' + escape(new URL('tmdb.svg', publicHome).href) +
       '" alt="TMDB" width="62" height="9" loading="lazy"></a>' +
       '<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section>')
-  }).catch(() => {})
-  await Promise.all([loadPopular, loadRefresh])
+  } catch {
+    if (signal.aborted) return
+    if (hosted) {
+      for (const { key } of popular) unavailablePopular(key)
+      return
+    }
+    // Local development can browse without a published snapshot.
+    await Promise.all(popular.map(async ({ key }) => {
+      try {
+        const data = await cachedCatalogue([key, '', 1].join(':'), () => browse({ kind: key, page: 1, signal }))
+        if (!signal.aborted) showPopular(key, data.items)
+      } catch {
+        if (!signal.aborted) unavailablePopular(key)
+      }
+    }))
+  }
 }
 
 async function list(url, signal) {

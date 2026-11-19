@@ -34,6 +34,22 @@ function normalize(meta, kind) {
   }
 }
 
+export function releaseDay(value) {
+  const date = string(value, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return ''
+  const parsed = new Date(date + 'T00:00:00Z')
+  return Number.isFinite(+parsed) && parsed.toISOString().startsWith(date) ? date : ''
+}
+
+function hasCinemetaRelease(meta, kind, today) {
+  const dates = [meta.released]
+  if (kind === 'series' && Array.isArray(meta.videos)) {
+    const first = meta.videos.find(episode => episode?.season === 1 && episode.episode === 1)
+    dates.push(first?.released)
+  }
+  return dates.map(releaseDay).some(date => date && date <= today)
+}
+
 async function list(kind, { query, genre, page, signal }) {
   const filters = []
   if (query) filters.push('search=' + encodeURIComponent(query))
@@ -41,12 +57,19 @@ async function list(kind, { query, genre, page, signal }) {
   if (page > 1) filters.push('skip=' + ((page - 1) * pageSize))
   const data = await read('/catalog/' + kind + '/top' + (filters.length ? '/' + filters.join('&') : '') + '.json', signal)
   if (!Array.isArray(data.metas)) throw new Error('The catalogue returned an unreadable response.')
-  return data.metas.map(meta => normalize(meta, kind)).filter(Boolean)
+  return data.metas
 }
 
 export async function browse(options) {
-  const items = await list(options.kind, options)
-  return { items: items.slice(0, pageSize), hasNext: items.length > pageSize }
+  const source = await list(options.kind, options)
+  const today = new Date().toISOString().slice(0, 10)
+  const items = source.slice(0, pageSize).filter(meta => meta && hasCinemetaRelease(meta, options.kind, today))
+  return { items: items.map(meta => normalize(meta, options.kind)).filter(Boolean), hasNext: source.length > pageSize }
+}
+
+export async function popularCandidates(kind, signal) {
+  const source = await list(kind, { page: 1, signal })
+  return source.map(meta => normalize(meta, kind)).filter(Boolean)
 }
 
 function picks(kind, entries) {
@@ -110,8 +133,12 @@ export async function refreshedCollections(signal) {
   const response = await fetch(new URL('./catalogue-snapshot.json', import.meta.url), { signal, credentials: 'omit' })
   if (!response.ok) throw new Error('The catalogue snapshot is unavailable.')
   const data = await response.json()
-  if (!Array.isArray(data?.trending) || !Array.isArray(data.latest)) throw new Error('Invalid catalogue snapshot.')
+  if (data?.version !== 2 || ![data.popularMovies, data.popularSeries, data.trending, data.latest].every(Array.isArray)) {
+    throw new Error('Invalid catalogue snapshot.')
+  }
   return [
+    { key: 'movie', label: 'Popular Movies', items: data.popularMovies },
+    { key: 'series', label: 'Popular Series', items: data.popularSeries },
     { key: 'trending', label: 'Trending This Week', items: data.trending },
     { key: 'latest', label: 'Latest Releases', items: data.latest }
   ].map(row => ({
@@ -121,12 +148,13 @@ export async function refreshedCollections(signal) {
       const artwork = image(item?.artwork)
       return imdbId.test(item?.id) && kinds.has(item.kind) && title && artwork
         ? [{ id: item.id, kind: item.kind, title, artwork }] : []
-    }).slice(0, 12)
+    })
   })).filter(row => row.items.length)
 }
 
 export async function search(query, signal) {
-  const results = await Promise.allSettled([...kinds].map(kind => list(kind, { query, page: 1, signal })))
+  const results = await Promise.allSettled([...kinds].map(async kind =>
+    (await list(kind, { query, page: 1, signal })).map(meta => normalize(meta, kind)).filter(Boolean)))
   if (results.every(result => result.status === 'rejected')) throw results[0].reason
   const normalizedQuery = query.toLowerCase()
   const rank = item => item.title.toLowerCase() === normalizedQuery ? 0 : item.title.toLowerCase().startsWith(normalizedQuery) ? 1 : 2

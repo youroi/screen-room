@@ -1,26 +1,38 @@
 import { writeFile, rename } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { imdbId } from '../public/catalogue.js'
+import { featured, imdbId, popularCandidates, releaseDay } from '../public/catalogue.js'
 
 const regions = ['BD', 'IN', 'US']
 const rowSize = 12
 const batchSize = 8
+const publicReleaseTypes = new Map([[3, 'theatrical'], [4, 'digital']])
 
-function dateOnly(value) {
-  const date = typeof value === 'string' ? value.slice(0, 10) : ''
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return ''
-  const parsed = new Date(date + 'T00:00:00Z')
-  return Number.isFinite(+parsed) && parsed.toISOString().startsWith(date) ? date : ''
+function publicReleaseDates(market, today) {
+  return (market?.release_dates ?? []).flatMap(entry => {
+    const type = publicReleaseTypes.get(entry.type)
+    const date = releaseDay(entry.release_date)
+    return type && date && date <= today ? [{ type, date }] : []
+  })
 }
 
-export function digitalRelease(releases, today) {
+export function latestRelease(releases, today) {
   for (const region of regions) {
-    const dates = releases.find(entry => entry.iso_3166_1 === region)?.release_dates
-    const releasedOn = (dates ?? []).filter(entry => entry.type === 4)
-      .map(entry => dateOnly(entry.release_date)).filter(date => date && date <= today).sort()[0]
-    if (releasedOn) return { region, releasedOn }
+    const market = releases.find(entry => entry.iso_3166_1 === region)
+    const dates = publicReleaseDates(market, today).sort((a, b) => a.date.localeCompare(b.date))
+    const theatrical = dates.find(entry => entry.type === 'theatrical')
+    const digital = dates.find(entry => entry.type === 'digital')
+    // Keep a first digital debut after theatrical opening while ignoring later re-releases.
+    const chosen = digital && (!theatrical || digital.date >= theatrical.date) ? digital : theatrical
+    if (chosen) return { region, releasedOn: chosen.date, releaseType: chosen.type }
   }
   return null
+}
+
+export function hasReleasedEpisode(details, today) {
+  const episode = details?.last_episode_to_air
+  const airDate = releaseDay(episode?.air_date)
+  return episode?.season_number >= 1 && episode.episode_number >= 1 && episode.episode_type !== 'special' &&
+    Boolean(airDate && airDate <= today)
 }
 
 function rows(payload, source) {
@@ -60,16 +72,32 @@ async function inBatches(items, transform) {
   return results
 }
 
-export async function buildSnapshot(request, now = new Date()) {
+export async function buildSnapshot(request, now = new Date(), readPopular = popularCandidates) {
   const today = now.toISOString().slice(0, 10)
   const from = new Date(+now - 28 * 86_400_000).toISOString().slice(0, 10)
   const movieDetails = new Map()
+  const seriesDetails = new Map()
 
   function movie(id) {
     if (!movieDetails.has(id)) {
       movieDetails.set(id, request('/movie/' + id, { append_to_response: 'external_ids,release_dates' }))
     }
     return movieDetails.get(id)
+  }
+
+  function series(id) {
+    if (!seriesDetails.has(id)) {
+      seriesDetails.set(id, request('/tv/' + id, { append_to_response: 'external_ids' }))
+    }
+    return seriesDetails.get(id)
+  }
+
+  async function released(kind, id) {
+    const details = await (kind === 'movie' ? movie(id) : series(id))
+    const available = kind === 'movie'
+      ? rows(details.release_dates, 'TMDB release dates').some(market => publicReleaseDates(market, today).length)
+      : hasReleasedEpisode(details, today)
+    return available ? details.external_ids?.imdb_id ?? details.imdb_id : null
   }
 
   function usable(candidate) {
@@ -83,23 +111,19 @@ export async function buildSnapshot(request, now = new Date()) {
       const candidates = rows(feed, 'TMDB weekly trending').filter(item =>
         usable(item) && ['movie', 'tv'].includes(item.media_type))
       entries.push(...await inBatches(candidates, async candidate => {
-        if (candidate.media_type === 'movie') {
-          const details = await movie(candidate.id)
-          return entry(candidate, details.external_ids?.imdb_id ?? details.imdb_id, 'movie')
-        }
-        const ids = await request('/tv/' + candidate.id + '/external_ids')
-        return entry(candidate, ids.imdb_id, 'series')
+        const kind = candidate.media_type === 'movie' ? 'movie' : 'series'
+        return entry(candidate, await released(kind, candidate.id), kind)
       }))
       if (unique(entries).length >= rowSize || page >= feed.total_pages) break
     }
     return unique(entries).slice(0, rowSize)
   }
 
-  async function regional(region) {
+  async function regional(region, releaseType) {
     const candidates = []
     const query = {
       region,
-      with_release_type: 4,
+      with_release_type: releaseType,
       'release_date.gte': from,
       'release_date.lte': today,
       include_adult: false,
@@ -107,27 +131,49 @@ export async function buildSnapshot(request, now = new Date()) {
     }
     for (let page = 1; ; page++) {
       const feed = await request('/discover/movie', { ...query, page })
-      const results = rows(feed, 'TMDB digital releases')
+      const results = rows(feed, 'TMDB regional releases')
       candidates.push(...results.filter(usable))
       if (!results.length || page >= (feed.total_pages ?? 1)) return candidates
     }
   }
 
+  async function popular(kind) {
+    const candidates = unique(await readPopular(kind, AbortSignal.timeout(15_000)))
+      .filter(item => item.artwork && !featured.some(pick => pick.id === item.id))
+    const selected = []
+    for (let index = 0; index < candidates.length && selected.length < 18; index += batchSize) {
+      const checked = await Promise.all(candidates.slice(index, index + batchSize).map(async item => {
+        const matches = await request('/find/' + item.id, { external_source: 'imdb_id' })
+        const result = (kind === 'movie' ? matches.movie_results : matches.tv_results)?.[0]
+        if (!Number.isSafeInteger(result?.id) || result.id < 1 || result.adult === true) return null
+        if (await released(kind, result.id) !== item.id) return null
+        return { id: item.id, kind, title: item.title, artwork: item.artwork }
+      }))
+      selected.push(...checked.filter(Boolean))
+    }
+    return selected.slice(0, 18)
+  }
+
   const trending = await weekly()
   const trendIds = new Set(trending.map(item => item.id))
-  const markets = await Promise.all(regions.map(regional))
+  const popularMovies = await popular('movie')
+  const popularSeries = await popular('series')
+  const markets = await Promise.all(regions.flatMap(region =>
+    [...publicReleaseTypes.keys()].map(type => regional(region, type))))
   const candidates = [...new Map(markets.flat().map(candidate => [candidate.id, candidate])).values()]
   const releases = await inBatches(candidates, async candidate => {
     const details = await movie(candidate.id)
-    const release = digitalRelease(rows(details.release_dates, 'TMDB release dates'), today)
+    const release = latestRelease(rows(details.release_dates, 'TMDB release dates'), today)
     const item = entry(candidate, details.external_ids?.imdb_id ?? details.imdb_id, 'movie')
     return item && release && release.releasedOn >= from ? { ...item, ...release } : null
   })
   const latest = unique(releases).sort((a, b) =>
     b.releasedOn.localeCompare(a.releasedOn) || Number(trendIds.has(a.id)) - Number(trendIds.has(b.id))
   ).slice(0, rowSize)
-  if (!trending.length || !latest.length) throw new Error('TMDB did not return usable entries for both rows.')
-  return { generatedAt: now.toISOString(), trending, latest }
+  if (![trending, latest, popularMovies, popularSeries].every(items => items.length)) {
+    throw new Error('The refresh did not confirm releases for every catalogue row.')
+  }
+  return { version: 2, generatedAt: now.toISOString(), popularMovies, popularSeries, trending, latest }
 }
 
 export async function refreshSnapshot(path, request, now) {

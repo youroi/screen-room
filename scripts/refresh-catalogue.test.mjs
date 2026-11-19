@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { buildSnapshot, digitalRelease, refreshSnapshot } from './refresh-catalogue.mjs'
+import { buildSnapshot, hasReleasedEpisode, latestRelease, refreshSnapshot } from './refresh-catalogue.mjs'
 import { hasHindiDub, prioritizeHindi } from '../public/hindi-dubs.js'
 
 const now = new Date('2026-11-19T10:23:00Z')
@@ -13,52 +13,86 @@ const release = (iso_3166_1, ...dates) => ({
   release_dates: dates.map(([type, date]) => ({ type, release_date: date + 'T00:00:00Z' }))
 })
 
-test('only valid, already released digital dates qualify in the selected market order', () => {
-  assert.deepEqual(digitalRelease([
-    release('BD', [3, '2026-11-16'], [4, '2026-12-25']),
-    release('IN', [4, '2026-11-16'], [4, '2026-11-18']),
+test('regular theatrical and digital releases count and advance screenings do not', () => {
+  assert.deepEqual(latestRelease([
+    release('BD', [1, '2026-11-16'], [2, '2026-11-18'], [4, '2026-12-25']),
+    release('IN', [3, '2026-11-16'], [3, '2026-11-18']),
     release('US', [4, '2026-11-19'])
-  ], '2026-11-19'), { region: 'IN', releasedOn: '2026-11-16' })
-  assert.equal(digitalRelease([
-    release('BD', [3, '2026-11-19']),
+  ], '2026-11-19'), { region: 'IN', releasedOn: '2026-11-16', releaseType: 'theatrical' })
+  assert.equal(latestRelease([
+    release('BD', [1, '2026-11-19'], [2, '2026-11-19']),
     release('US', [4, '2026-02-30']),
     release('FR', [4, '2026-11-19'])
   ], '2026-11-19'), null)
-  assert.deepEqual(digitalRelease([
-    release('BD', [4, '2026-11-17']), release('IN', [4, '2026-11-18'])
-  ], '2026-11-19'), { region: 'BD', releasedOn: '2026-11-17' })
+  assert.deepEqual(latestRelease([
+    release('BD', [3, '2026-09-20'], [4, '2026-11-17']), release('IN', [4, '2026-11-18'])
+  ], '2026-11-19'), { region: 'BD', releasedOn: '2026-11-17', releaseType: 'digital' })
 })
 
-test('weekly rank stays intact and same-day releases prefer a title without weekly overlap', async () => {
-  const titles = [film(1, 'First'), film(2, 'Second'), film(3, 'Third'), film(4, 'Fourth')]
+function tvEpisode(air_date, season_number = 1) {
+  return { last_episode_to_air: { air_date, season_number, episode_number: 1 } }
+}
+
+test('series require a full released episode', () => {
+  assert.equal(hasReleasedEpisode(tvEpisode('2026-11-19'), '2026-11-19'), true)
+  assert.equal(hasReleasedEpisode(tvEpisode('2026-11-20'), '2026-11-19'), false)
+  assert.equal(hasReleasedEpisode(tvEpisode('2026-11-01', 0), '2026-11-19'), false)
+  assert.equal(hasReleasedEpisode({ first_air_date: '2026-11-01' }, '2026-11-19'), false)
+})
+
+test('weekly and popular skip upcoming titles while Latest accepts regular releases', async () => {
+  const movies = [
+    film(1, 'First'), film(2, 'Early preview'), film(3, 'Regular theatrical'),
+    film(4, 'Digital debut'), film(5, 'Upcoming')
+  ]
+  const series = [{ ...film(6, 'Upcoming series'), media_type: 'tv' }, { ...film(7, 'On air'), media_type: 'tv' }]
+  const imdb = id => 'tt000000' + id
   const marketQueries = []
   const requested = []
   const snapshot = await buildSnapshot(async (path, params) => {
     requested.push(path)
     if (path === '/trending/all/week') {
       assert.equal(params.page, 1)
-      return { results: [titles[0], { id: 9, media_type: 'person' }, titles[1], titles[0]], total_pages: 1 }
+      return { results: [movies[4], series[0], movies[0], movies[1], series[1], movies[0]], total_pages: 1 }
     }
     if (path === '/discover/movie') {
-      marketQueries.push(params.region)
-      assert.equal(params.with_release_type, 4)
+      marketQueries.push(params.region + ':' + params.with_release_type)
       assert.equal(params['release_date.lte'], '2026-11-19')
-      if (params.region === 'IN' && params.page === 1) return { results: titles.slice(1, 3), total_pages: 2 }
-      return { results: params.region === 'IN' ? [titles[3]] : titles.slice(0, 3), total_pages: params.page }
+      if (params.region === 'IN' && params.with_release_type === 4 && params.page === 1) {
+        return { results: movies.slice(0, 3), total_pages: 2 }
+      }
+      return { results: movies.slice(3), total_pages: params.page }
+    }
+    if (path.startsWith('/find/')) {
+      assert.equal(params.external_source, 'imdb_id')
+      const id = Number(path.at(-1))
+      return { [id < 6 ? 'movie_results' : 'tv_results']: [{ id }] }
     }
     const id = Number(path.split('/').at(-1))
+    if (path.startsWith('/tv/')) {
+      assert.equal(params.append_to_response, 'external_ids')
+      return { external_ids: { imdb_id: imdb(id) }, ...tvEpisode(id === 6 ? '2026-11-20' : '2026-11-18') }
+    }
     assert.equal(params.append_to_response, 'external_ids,release_dates')
-    return { imdb_id: 'tt000000' + id, release_dates: { results: [
-      id === 2
-        ? release('BD', [3, '2026-11-19'])
-        : release('IN', [4, id === 4 ? '2026-11-17' : '2026-11-19'])
-    ] } }
-  }, now)
-  assert.deepEqual(snapshot.trending.map(item => item.title), ['First', 'Second'])
-  assert.deepEqual(snapshot.latest.map(item => item.title), ['Third', 'First', 'Fourth'])
-  assert.deepEqual([...new Set(marketQueries)], ['BD', 'IN', 'US'])
+    const dates = {
+      1: [4, '2026-11-19'],
+      2: [1, '2026-11-19'],
+      3: [3, '2026-11-19'],
+      4: [4, '2026-11-17'],
+      5: [3, '2026-12-18']
+    }
+    return { imdb_id: imdb(id), release_dates: { results: [release('IN', dates[id])] } }
+  }, now, async kind => (kind === 'movie' ? movies : series).map(item => ({
+    id: imdb(item.id), title: item.title, kind, artwork: 'https://image.tmdb.org/t/p/w342/poster.jpg'
+  })))
+  assert.equal(snapshot.version, 2)
+  assert.deepEqual(snapshot.trending.map(item => item.title), ['First', 'On air'])
+  assert.deepEqual(snapshot.popularMovies.map(item => item.title), ['First', 'Regular theatrical', 'Digital debut'])
+  assert.deepEqual(snapshot.popularSeries.map(item => item.title), ['On air'])
+  assert.deepEqual(snapshot.latest.map(item => item.title), ['Regular theatrical', 'First', 'Digital debut'])
+  assert.deepEqual([...new Set(marketQueries)], ['BD:3', 'BD:4', 'IN:3', 'IN:4', 'US:3', 'US:4'])
   assert.equal(requested.filter(path => path === '/movie/1').length, 1)
-  assert.equal(snapshot.latest[0].region, 'IN')
+  assert.equal(snapshot.latest[0].releaseType, 'theatrical')
 })
 
 test('a failed refresh leaves the previous snapshot untouched', async t => {
