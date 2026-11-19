@@ -8,7 +8,7 @@ async function openScreenRoom() {
   try {
     const home = new URL('./', import.meta.url)
     const response = await fetch(home, { credentials: 'omit', redirect: 'error', cache: 'no-cache' })
-    if (!response.ok) throw new Error('Screen Room is unavailable')
+    if (!response.ok) throw new Error('The player is unavailable')
     const shell = new DOMParser().parseFromString(await response.text(), 'text/html')
     const entry = shell.querySelector('script[type="module"][src]')
     const app = new URL(entry.getAttribute('src'), home)
@@ -23,6 +23,6 @@ async function openScreenRoom() {
     script.src = app.href
     document.head.append(script)
   } catch {
-    alert('Screen Room could not load in this tab.')
+    alert('The player could not load in this tab.')
   }
 }

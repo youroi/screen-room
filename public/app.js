@@ -18,9 +18,6 @@ history.scrollRestoration = 'manual'
 for (const link of document.querySelectorAll('[data-route]')) {
   link.setAttribute('href', routeTarget(link.getAttribute('href')))
 }
-const playerHelp = document.querySelector('[data-player-help]')
-playerHelp.href = webPlayerHelp
-playerHelp.hidden = !hosted
 document.querySelector('.skip').addEventListener('click', event => {
   event.preventDefault()
   main.focus()
@@ -72,7 +69,7 @@ function itemRoute(mode, item) {
 }
 
 function routeLabel(title) {
-  document.title = title ? title + ' · Drisho' : 'Drisho'
+  document.title = title ? title + ' · still.' : 'still.'
 }
 
 function paint(html, signal) {
@@ -469,11 +466,17 @@ function titleLink(item) {
   return '<a class="return-link" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' + icon('back') + 'Title details</a>'
 }
 
+function setupLink(watchRoute) {
+  return '<a class="playback-help" href="' + escape(webPlayerHelp + '#' + watchRoute) + '">Player setup</a>'
+}
+
 function episodes(item) {
   const first = item.seasons[0]?.episodes[0]
+  const watchRoute = itemRoute('watch', item) + (first ? '?episode=' + encodeURIComponent(first.key) : '')
   const button = item.kind === 'movie' || first
-    ? '<a class="button primary" data-route href="' + escape(routeTarget(itemRoute('watch', item) +
-      (first ? '?episode=' + encodeURIComponent(first.key) : ''))) + '">' + playIcon + (first ? 'Play first episode' : 'Play') + '</a>'
+    ? '<div class="title-actions"><a class="button primary" data-route href="' + escape(routeTarget(watchRoute)) +
+      '">' + playIcon + (first ? 'Play first episode' : 'Play') + '</a>' +
+      (hosted ? setupLink(watchRoute) : '') + '</div>'
     : '<p class="muted">Video unavailable.</p>'
   const seasons = item.seasons.map((season, index) => '<details class="season"' + (index === 0 ? ' open' : '') + '><summary>' +
     escape(season.name) + '</summary><ul>' + season.episodes.map(ep =>
@@ -932,7 +935,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=8')
+      audioModule = import('./browser-audio.js?v=9')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
@@ -1195,8 +1198,7 @@ async function startPlayback(item, episode, signal, autoplay) {
   if (hosted && !circleTab) {
     state.innerHTML = '<div><p>Playback needs a connection that can reach Circle.</p><div class="player-state-actions">' +
       '<a class="button primary" href="' + escape(routeTarget(currentRoute)) + '" rel="noreferrer">' +
-      playIcon + 'Play on Circle</a><a class="button quiet" href="' + escape(webPlayerHelp + '#' + currentRoute) +
-      '">Player setup</a></div></div>'
+      playIcon + 'Play on Circle</a>' + setupLink(currentRoute) + '</div></div>'
     return
   }
 

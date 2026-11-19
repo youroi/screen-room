@@ -1,10 +1,10 @@
-# Drisho
+# still.
 
-[Open Drisho](https://youroi.github.io/screen-room/) on a phone or desktop. Browse and search movies and series, then open the title page for artwork, details and episodes. [Cinemeta](https://github.com/Stremio/stremio-official-addons) supplies metadata.
+[Open still.](https://youroi.github.io/screen-room/) on a phone or desktop. Browse and search movies and series, then open the title page for artwork, details and episodes. [Cinemeta](https://github.com/Stremio/stremio-official-addons) supplies metadata.
 
 Circle FTP is the only playback source. Home, catalogue rows, Search and title details run on the public site. **Play** opens the selected title or episode directly in the same tab. The browser looks up and streams the video through the viewer's BDIX connection. Browser Back and the player's Home and Search links return to the public site.
 
-In Via, install the player script from [Player setup](https://youroi.github.io/screen-room/web-play.html) once. Other browsers can use the bookmark described there. Drisho prepares MKV audio on the Watch page and prefers Hindi, then the original or default track. Playback settings let you change the audio track, speed, and volume. The browser audio decoders cover AAC, AC-3, E-AC-3, DTS, and Dolby TrueHD when the file server supports byte ranges.
+In Via, install the player script once from **Player setup** next to Play on a title page. Other browsers can use the bookmark described there. The browser prepares MKV audio on the Watch page and prefers Hindi, then the original or default track. Playback settings let you change the audio track, speed, and volume. The browser audio decoders cover AAC, AC-3, E-AC-3, DTS, and Dolby TrueHD when the file server supports byte ranges.
 
 ## Development
 
