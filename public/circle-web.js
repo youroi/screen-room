@@ -1,9 +1,11 @@
-import { circleWebOrigins } from './playback.js'
+import { browserAudioRoute, circleWebOrigins } from './playback.js?v=8'
 
-if (circleWebOrigins.includes(location.origin)) {
+const audio = browserAudioRoute(location)
+if (circleWebOrigins.includes(location.origin) || audio) {
   try {
     const home = new URL('./', import.meta.url)
-    const response = await fetch(home, { credentials: 'omit', redirect: 'error', cache: 'no-cache' })
+    const page = audio ? new URL('browser-audio.html', home) : home
+    const response = await fetch(page, { credentials: 'omit', redirect: 'error', cache: 'no-cache' })
     if (!response.ok) throw new Error('Screen Room is unavailable')
     const shell = new DOMParser().parseFromString(await response.text(), 'text/html')
     const entry = shell.querySelector('script[type="module"][src]')

@@ -4,6 +4,8 @@
 
 Circle FTP is the only playback source. Screen Room looks for a matching stream when Watch opens. The published Circle API uses HTTP. The [Circle web player](https://youroi.github.io/screen-room/web-play.html) opens the hosted UI in the Circle API tab using a Chrome bookmark. The browser then makes the playback lookup from the Circle origin and streams over the phone's BDIX connection. Open that tab and run the bookmark again after closing or reloading it.
 
+If an MKV is silent, use **Browser audio**, run the updated Screen Room bookmark in the file-server tab, then select **Play with browser audio**. This mode decodes AC-3 and E-AC-3 in the browser and requires byte-range responses from the file server.
+
 ## Development
 
 Node.js 24+ serves the app locally with the same browse and search flow. The local development server uses Circle for playback resolution and forwards byte-range requests.

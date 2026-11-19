@@ -4,7 +4,19 @@ import { test } from 'node:test'
 import { once } from 'node:events'
 import { createCircle } from './circle.mjs'
 import { createApp } from './server.mjs'
-import { browserCircleStream, findCircleStream } from './public/playback.js'
+import { browserAudioRoute, browserCircleStream, findCircleStream } from './public/playback.js'
+
+test('browser audio accepts only same-origin Circle MKV files', () => {
+  const origin = 'http://ftp16.circleftp.net'
+  const source = origin + '/Pilot%20S01E01.mkv'
+  const hash = '#' + new URLSearchParams({ 'screenroom-audio': source, time: '945' })
+  assert.deepEqual(browserAudioRoute({ origin, hash }), { source, time: 945 })
+  assert.equal(browserAudioRoute({ origin: 'http://new.circleftp.net:5000', hash }), null)
+  for (const url of ['http://example.org/a.mkv', origin + '/a.mp4']) {
+    assert.equal(browserAudioRoute({ origin: new URL(url).origin,
+      hash: '#' + new URLSearchParams({ 'screenroom-audio': url }) }), null)
+  }
+})
 
 async function listen(server, context) {
   server.listen(0, '127.0.0.1')

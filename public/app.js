@@ -224,6 +224,7 @@ function watch(item, episode) {
     '<p id="audio-status" class="muted" role="status" hidden>No audio track has decoded. ' +
     'Your browser may not support this stream’s audio format.</p>' +
     '<div class="playback-options" hidden><label hidden>Audio track <select id="audio-track"></select></label>' +
+    '<a class="button quiet" data-browser-audio target="_blank" rel="noopener" hidden>Browser audio</a>' +
     '<button class="button quiet" type="button" data-other-stream hidden>Try another stream</button></div>' +
     '<p id="stream-status" class="muted" role="status" hidden></p>' +
     '<details class="playback-debug" hidden><summary>Playback details</summary><pre></pre>' +
@@ -254,6 +255,18 @@ function bindPlayer(signal, autoplay, reportAudio) {
   const testSound = debug.querySelector('[data-test-sound]')
   const soundResult = debug.querySelector('[data-sound-result]')
   const source = video.getAttribute('src')
+  const audioLink = main.querySelector('[data-browser-audio]')
+  const audioSource = circleTab ? circleVideo(source) : null
+  if (audioSource && mediaType(audioSource) === 'video/x-matroska') {
+    const setAudioLink = () => {
+      const url = new URL('/', audioSource)
+      url.hash = new URLSearchParams({ 'screenroom-audio': audioSource.href, time: video.currentTime })
+      audioLink.href = url.href
+    }
+    setAudioLink()
+    audioLink.hidden = false
+    audioLink.addEventListener('click', setAudioLink, { signal })
+  }
   let bufferTimer
   let seekTimer
   let scrubbing = false
