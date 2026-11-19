@@ -4,7 +4,8 @@ import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByt
 const main = document.querySelector('main')
 const circleTab = circleWebOrigins.includes(location.origin)
 const hosted = location.protocol === 'https:' || circleTab
-const webPlayerHelp = new URL('./web-play.html', import.meta.url).href
+const publicHome = new URL('./', import.meta.url).href
+const webPlayerHelp = new URL('web-play.html', publicHome).href
 const genres = ['', 'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
   'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller']
 let navigation
@@ -51,6 +52,7 @@ function readRoute() {
 }
 
 function routeTarget(path) {
+  if (circleTab && !path.startsWith('/watch/')) return publicHome + '#' + path
   return hosted ? '#' + path : path
 }
 
@@ -216,7 +218,7 @@ function watch(item, episode) {
     '<video id="video" playsinline preload="metadata"' + poster + '></video>' +
     '<div class="player-state" role="status"><span class="spinner" aria-hidden="true"></span>Finding stream…</div>' +
     '<div class="player-state seek-recovery" hidden><div><h2>Seek stalled</h2><p role="status"></p>' +
-    '<div class="seek-actions"><button class="button primary" type="button" data-retry-seek>Retry seek</button>' +
+    '<div class="player-state-actions"><button class="button primary" type="button" data-retry-seek>Retry seek</button>' +
     '<button class="button quiet" type="button" data-resume-seek>Resume playback</button></div></div></div>' +
     '<button class="player-start" type="button" aria-label="Play video" hidden>' + playIcon + '</button>' +
     '<div class="buffering" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="sr-only">Buffering</span></div></div>' +
@@ -832,9 +834,20 @@ function bindPlayer(signal, autoplay, reportAudio) {
 }
 
 async function startPlayback(item, episode, signal, autoplay) {
+  const watchPage = main.querySelector('.route-enter')
+  const state = watchPage.querySelector('.player-state')
+  if (hosted && !circleTab) {
+    const player = new URL('/api/posts?searchTerm=screen-room-browser&limit=1', circleWebOrigins[0])
+    player.hash = currentRoute
+    state.innerHTML = '<div><p>Playback needs a connection that can reach Circle.</p><div class="player-state-actions">' +
+      '<a class="button primary" href="' + escape(player.href) + '" target="_blank" rel="noopener noreferrer">' +
+      playIcon + 'Play on Circle</a><a class="button quiet" href="' + escape(webPlayerHelp + player.hash) +
+      '">Player setup</a></div></div>'
+    return
+  }
+
   const request = { kind: item.kind, id: item.id, title: item.title, year: item.year }
   if (episode) Object.assign(request, { season: episode.season, episode: episode.number })
-  const watchPage = main.querySelector('.route-enter')
   const tried = new Set()
   const audioKey = 'screenroom.audio.' + item.id + (episode ? '.' + episode.key : '')
   let preferredSource
@@ -910,10 +923,9 @@ async function startPlayback(item, episode, signal, autoplay) {
     if (circleTab && button && !button.disabled) void findAnother(button)
   }, { signal })
 
-  const state = watchPage.querySelector('.player-state')
   try {
     let source
-    if (hosted) {
+    if (circleTab) {
       source = preferredSource ?? await browserCircleStream(request, signal, location.origin)
     } else {
       const response = await fetch('/api/play?' + new URLSearchParams(request), { signal })
@@ -925,15 +937,16 @@ async function startPlayback(item, episode, signal, autoplay) {
     showPlayer(source, autoplay)
   } catch (error) {
     if (signal.aborted) return
-    const action = hosted && !circleTab
-      ? '<a class="button quiet" href="' + escape(webPlayerHelp + '#' + currentRoute) + '">Circle web player</a>'
-      : retryButton
-    state.innerHTML = '<div><h2>Stream unavailable</h2><p>' + escape(error.message) + '</p>' + action + '</div>'
+    state.innerHTML = '<div><h2>Stream unavailable</h2><p>' + escape(error.message) + '</p>' + retryButton + '</div>'
   }
 }
 
 async function render(focus = false, autoplay = false) {
   navigation?.abort()
+  if (circleTab && !currentRoute.startsWith('/watch/')) {
+    location.replace(routeTarget(currentRoute))
+    return
+  }
   navigation = new AbortController()
   const { signal } = navigation
   const url = new URL(currentRoute, location.origin)
@@ -990,7 +1003,8 @@ function go(href) {
 document.addEventListener('click', event => {
   if (event.target.closest('[data-retry]')) return void render()
   const link = event.target.closest('a[data-route]')
-  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (!link || link.origin !== location.origin || event.button !== 0 ||
+      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   const href = hosted ? link.hash.slice(1) : link.pathname + link.search
   void go(href)?.then(() => {
