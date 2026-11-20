@@ -56,7 +56,8 @@ jobs:
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
           if [ "$EVENT" = schedule ] || [ "$MOVIES_REQUESTED" = true ] ||
-             ! jq -e '.version == 1' .movies-published/movies-data/index.json > /dev/null 2>&1; then
+             { ! jq -e '.version == 1' .movies-published/movies-data/index.json > /dev/null 2>&1 &&
+               ! jq -e '.version == 1' .published/movies-data/index.json > /dev/null 2>&1; }; then
             echo 'movies=true' >> "$GITHUB_OUTPUT"
           fi
       - if: steps.refresh.outputs.needed == 'true' || steps.refresh.outputs.movies == 'true'
