@@ -25,6 +25,12 @@ After checking real Circle playback in Via, record the title's IMDb ID in `scrip
 
 Edit `public/hindi-dubs.js` to add verified dubs. Use an official movie source or a source for each confirmed season. A series gets a boost when its latest aired season is confirmed. These records rank titles independently of the audio tracks in a Circle file.
 
+### Movies catalogue
+
+The Movies page uses a separate, popularity-ordered index of released films with IMDb identifiers. The index is based on [Asaniczka’s Full TMDB Movies Dataset](https://www.kaggle.com/dsv/10525426) ([ODC Attribution License](https://opendatacommons.org/licenses/by/1-0/), [archived CSV mirror](https://huggingface.co/datasets/ada-datadruids/full_tmdb_movies_dataset)). The workflow refreshes the scores from the official [TMDB daily ID export](https://developer.themoviedb.org/docs/daily-id-exports), checks recent releases, and backfills newer historical releases from TMDB. The first build seeds well-covered newer releases. Subsequent builds include all eligible additions in each backfilled release window regardless of vote count.
+
+Set `SCREENROOM_MOVIES_DIR` to a generated Movies data directory when testing local Movies browsing. The default path is `public/movies-data/`. Run the Publish catalogue workflow with **Refresh the Movies catalogue** enabled to refresh it on demand.
+
 The seek regression also runs in Chromium. Generate a local test clip with
 `ffmpeg -f lavfi -i testsrc2=size=640x360:rate=25 -t 18 -c:v libx264 -movflags +faststart /tmp/screen-room-clip.mp4`,
 start `node qa/seek-fixture.mjs /tmp/screen-room-clip.mp4`, and run `playwright-cli run-code --filename=qa/seek.browser.js` in a Chromium session.

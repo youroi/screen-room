@@ -8,6 +8,10 @@ on:
     - cron: '23 10 * * *'
   workflow_dispatch:
     inputs:
+      refresh_movies:
+        description: Refresh the Movies catalogue before publishing
+        type: boolean
+        default: false
       refresh:
         description: Refresh the catalogue before publishing
         type: boolean
@@ -23,7 +27,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     permissions:
       contents: write
     steps:
@@ -39,12 +43,17 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REQUESTED: ${{ inputs.refresh }}
+          MOVIES_REQUESTED: ${{ inputs.refresh_movies }}
         run: |
           if [ "$EVENT" = schedule ] || [ "$REQUESTED" = true ] ||
              ! jq -e '.version == 4' .published/catalogue-snapshot.json > /dev/null 2>&1; then
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.refresh.outputs.needed == 'true'
+          if [ "$EVENT" = schedule ] || [ "$MOVIES_REQUESTED" = true ] ||
+             ! jq -e '.version == 1' .published/movies-data/index.json > /dev/null 2>&1; then
+            echo 'movies=true' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.refresh.outputs.needed == 'true' || steps.refresh.outputs.movies == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -55,16 +64,45 @@ jobs:
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: node scripts/refresh-catalogue.mjs .published/catalogue-snapshot.json
-      - name: Save the validated snapshot
-        if: steps.generate.outcome == 'success'
+      - name: Refresh the Movies catalogue
+        id: movies
+        if: steps.refresh.outputs.movies == 'true'
+        continue-on-error: true
+        env:
+          TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: |
-          git -C .published add catalogue-snapshot.json
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/movies-build"
+          stage="$RUNNER_TEMP/movies-build"
+          source_url='https://huggingface.co/datasets/ada-datadruids/full_tmdb_movies_dataset/resolve/13ba9f3a87c60eaa07b235e1cfd2e16cc1c9105c/TMDB_movie_dataset_v11.csv?download=true'
+          curl -fsSL --retry 3 --max-time 300 -o "$stage/movies.csv" "$source_url"
+          export_day=$(date -u -d yesterday +%m_%d_%Y)
+          export_url="https://files.tmdb.org/p/exports/movie_ids_${export_day}.json.gz"
+          curl -fsSL --retry 3 --max-time 150 -o "$stage/movie-ids.json.gz" "$export_url"
+          node scripts/refresh-movies.mjs "$stage/movies-recent.json" .published/movies-recent.json
+          python3 scripts/build-movies.py "$stage/movies.csv" "$stage/movie-ids.json.gz" "$stage/movies-data" --recent "$stage/movies-recent.json"
+          git -C .published rm -qr --ignore-unmatch -- movies-data
+          cp -r "$stage/movies-data" .published/
+          cp "$stage/movies-recent.json" .published/movies-recent.json
+          git -C .published add movies-data movies-recent.json
+      - name: Save the validated snapshot
+        if: steps.generate.outcome == 'success' || steps.movies.outcome == 'success'
+        env:
+          REFRESH_OUTCOME: ${{ steps.generate.outcome }}
+        run: |
+          if [ "$REFRESH_OUTCOME" = success ]; then
+            git -C .published add catalogue-snapshot.json
+          fi
+          if git -C .published diff --cached --quiet; then
+            exit 0
+          fi
           git -C .published -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh catalogue snapshot'
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m 'Refresh catalogue snapshot'
           git -C .published push origin HEAD:gh-pages
       - name: Include the last validated snapshot
         env:
           REFRESH_OUTCOME: ${{ steps.generate.outcome }}
+          MOVIES_OUTCOME: ${{ steps.movies.outcome }}
         run: |
           if [ "$REFRESH_OUTCOME" = failure ]; then
             echo "::warning::Catalogue refresh failed. Publishing with the last valid snapshot."
@@ -72,6 +110,15 @@ jobs:
           fi
           if test -f .published/catalogue-snapshot.json; then
             cp .published/catalogue-snapshot.json public/catalogue-snapshot.json
+          fi
+          if [ "$MOVIES_OUTCOME" = failure ]; then
+            echo "::warning::Movies refresh failed. Publishing with the last valid Movies data."
+          fi
+          if git -C .published cat-file -e HEAD:movies-data/index.json; then
+            git -C .published archive HEAD movies-data | tar -x -C public
+          else
+            echo "::error::The first Movies index has not been published."
+            exit 1
           fi
       - uses: actions/upload-pages-artifact@v5
         with:

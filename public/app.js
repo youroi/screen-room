@@ -1,3 +1,4 @@
+import { movieCountries, movieGenres, movieIndex, moviePage, movieSelection, moviesRoute } from './movies.js?v=1'
 import { browse, search, title, fallbackFeatured, collections, offlineCollections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=9'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
@@ -278,11 +279,11 @@ function linkToPage(url, page) {
   return url.pathname + (params.size ? '?' + params : '')
 }
 
-function pageLinks(url, page, next) {
+function pageLinks(url, page, next, total) {
   if (page <= 1 && !next) return ''
   return '<nav class="pages" aria-label="Results pages">' +
     (page > 1 ? '<a class="button quiet" data-route href="' + escape(routeTarget(linkToPage(url, page - 1))) + '">' + icon('back') + 'Previous</a>' : '<span></span>') +
-    '<span>Page ' + page + '</span>' +
+    '<span>Page ' + page + (total ? ' of ' + total : '') + '</span>' +
     (next ? '<a class="button quiet" data-route href="' + escape(routeTarget(linkToPage(url, page + 1))) + '">Next' + icon('expand') + '</a>' : '<span></span>') +
     '</nav>'
 }
@@ -370,6 +371,76 @@ async function home(signal) {
     if (items?.length) body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
   }
   loadShelfArtwork(signal)
+}
+
+function movieSelector(name, label, options, selected) {
+  return '<label class="movie-selector"><span>' + label + '</span><span class="movie-select-value">' +
+    '<select name="' + name + '">' + options.map(([value, text]) =>
+      '<option value="' + escape(value) + '"' + (value === selected ? ' selected' : '') + '>' +
+      escape(text) + '</option>').join('') + '</select>' + icon('expand') + '</span></label>'
+}
+
+async function moviesPage(url, signal) {
+  const selection = movieSelection(url.searchParams)
+  const { country, genre, page } = selection
+  const activeFilters = Boolean(country || genre)
+  routeLabel('Movies')
+  paint('<section class="movies" aria-labelledby="movies-heading"><div class="movies-head">' +
+    '<h1 id="movies-heading">Movies</h1><form class="movie-selectors">' +
+    movieSelector('country', 'Country', movieCountries, country) +
+    movieSelector('genre', 'Genre', movieGenres.map(name => [name, name || 'All genres']), genre) + '</form></div>' +
+    '<p class="sr-only" role="status"></p><div class="movie-results" aria-busy="true">' +
+    '<ul class="grid movie-grid skeleton" aria-hidden="true">' + skeletonPosters + '</ul></div></section>', signal)
+
+  const form = main.querySelector('.movie-selectors')
+  form.addEventListener('submit', event => event.preventDefault(), { signal })
+  form.addEventListener('change', event => {
+    const { name } = event.target
+    const route = moviesRoute({
+      country: form.elements.country.value,
+      genre: form.elements.genre.value
+    })
+    void go(route)
+    main.querySelector('.movie-selectors select[name="' + name + '"]')?.focus({ preventScroll: true })
+  }, { signal })
+
+  const body = main.querySelector('.movie-results')
+  const status = body.previousElementSibling
+  const cacheKey = moviesRoute(selection)
+  async function readPage() {
+    const index = await cachedCatalogue('movies-index', () => movieIndex(signal))
+    try {
+      return await moviePage(selection, index, signal)
+    } catch (error) {
+      if (signal.aborted) throw error
+      catalogueCache.delete('movies-index')
+      const current = await cachedCatalogue('movies-index', () => movieIndex(signal, 'reload'))
+      return moviePage(selection, current, signal, 'reload')
+    }
+  }
+
+  try {
+    const data = await cachedCatalogue(cacheKey, readPage)
+    if (signal.aborted) return
+    const clear = '<a class="button quiet" href="' + escape(routeTarget(moviesRoute({}))) +
+      '" data-route>Clear filters</a>'
+    if (data.items.length) {
+      status.textContent = 'Page ' + page + ' of ' + data.pages
+      body.innerHTML = '<ul class="grid movie-grid">' +
+        data.items.map((item, index) => card(item, { eager: index < (innerWidth < 671 ? 2 : 5) })).join('') +
+        '</ul>' + pageLinks(new URL(cacheKey, location.origin), page, page < data.pages, data.pages)
+    } else if (data.total) {
+      body.innerHTML = message('Page unavailable', 'Open the last page for these filters.',
+        '<a class="button quiet" href="' + escape(routeTarget(moviesRoute({ ...selection, page: data.pages }))) +
+        '" data-route>Go to page ' + data.pages + '</a>')
+    } else {
+      body.innerHTML = message('No movies found', 'Try a different country or genre.', activeFilters ? clear : '')
+    }
+  } catch (error) {
+    if (!signal.aborted) body.innerHTML = message('Catalogue unavailable', error.message, retryButton)
+  } finally {
+    body.setAttribute('aria-busy', 'false')
+  }
 }
 
 async function list(url, signal) {
@@ -1332,7 +1403,7 @@ function destination(url) {
   if (url.pathname === '/search') return 'search'
   const kind = url.searchParams.get('kind')
   if (kinds.has(kind)) return kind
-  return url.searchParams.has('page') || url.searchParams.has('genre') ? 'movie' : 'home'
+  return ['page', 'genre', 'country'].some(key => url.searchParams.has(key)) ? 'movie' : 'home'
 }
 
 async function render(focus = false, autoplay = false, focusSearch = false) {
@@ -1357,7 +1428,11 @@ async function render(focus = false, autoplay = false, focusSearch = false) {
   }
 
   if (active === 'search' && browsing) return searchPage(url, signal, focusSearch)
-  if (browsing) return active === 'home' ? home(signal) : list(url, signal)
+  if (browsing) {
+    if (active === 'home') return home(signal)
+    if (active === 'movie') return moviesPage(url, signal)
+    return list(url, signal)
+  }
 
   const [, mode, kind, id] = url.pathname.split('/')
   if (!['title', 'watch'].includes(mode) || !kinds.has(kind) || !imdbId.test(id ?? '')) {

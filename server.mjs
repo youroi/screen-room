@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createCircle } from './circle.mjs'
@@ -9,6 +11,7 @@ import { mediaType } from './public/playback.js'
 const assets = new Map([
   ['/app.js', 'text/javascript; charset=utf-8'],
   ['/catalogue.js', 'text/javascript; charset=utf-8'],
+  ['/movies.js', 'text/javascript; charset=utf-8'],
   ['/hindi-dubs.js', 'text/javascript; charset=utf-8'],
   ['/catalogue-snapshot.json', 'application/json; charset=utf-8'],
   ['/playback.js', 'text/javascript; charset=utf-8'],
@@ -20,6 +23,8 @@ const assets = new Map([
 const index = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8')
   .replaceAll('href="./', 'href="/').replaceAll('src="./', 'src="/')
 const htmlRoute = /^\/(?:title|watch)\/(?:movie|series)\/tt\d{5,12}$/
+const moviesData = /^\/movies-data\/(index\.json|(?:all|US|IN|KR|JP)\/(?:[a-z-]+)\/\d+\.json)$/
+const moviesDirectory = process.env.SCREENROOM_MOVIES_DIR
 const videoRoute = /^\/video\/([a-f\d-]{36})$/
 const contentHeaders = {
   'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; connect-src 'self' https://v3-cinemeta.strem.io https://cinemeta-catalogs.strem.io; img-src 'self' https://images.metahub.space https://live.metahub.space https://image.tmdb.org https://episodes.metahub.space",
@@ -103,6 +108,19 @@ export function createApp(circle = createCircle()) {
         response.writeHead(upstream.status, headers)
         if (method === 'HEAD' || !upstream.body) return response.end()
         return await pipeline(Readable.fromWeb(upstream.body), response)
+      }
+
+      const movieFile = moviesData.exec(path)?.[1]
+      if (movieFile) {
+        try {
+          const bytes = await readFile(moviesDirectory ? resolve(moviesDirectory, movieFile) :
+            new URL('./public/movies-data/' + movieFile, import.meta.url))
+          response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...contentHeaders })
+          return response.end(method === 'HEAD' ? undefined : bytes)
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+          return json(404, { error: 'Movies data is unavailable.' })
+        }
       }
 
       const asset = assets.get(path)
