@@ -374,10 +374,11 @@ async function home(signal) {
 }
 
 function movieSelector(name, label, options, selected) {
-  return '<label class="movie-selector"><span>' + label + '</span><span class="movie-select-value">' +
-    '<select name="' + name + '">' + options.map(([value, text]) =>
+  const id = 'movie-filter-' + name
+  return '<div class="movie-selector"><label for="' + id + '">' + label + '</label><span class="movie-select-value">' +
+    '<select id="' + id + '" name="' + name + '">' + options.map(([value, text]) =>
       '<option value="' + escape(value) + '"' + (value === selected ? ' selected' : '') + '>' +
-      escape(text) + '</option>').join('') + '</select>' + icon('expand') + '</span></label>'
+      escape(text) + '</option>').join('') + '</select>' + icon('expand') + '</span></div>'
 }
 
 async function moviesPage(url, signal) {

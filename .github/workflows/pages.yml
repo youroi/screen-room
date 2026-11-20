@@ -38,6 +38,12 @@ jobs:
         with:
           ref: gh-pages
           path: .published
+      - name: Restore the last Movies build
+        uses: actions/cache/restore@v4
+        with:
+          path: .movies-published
+          key: still-movies-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: still-movies-v1-
       - name: Check whether to refresh
         id: refresh
         env:
@@ -50,7 +56,7 @@ jobs:
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
           if [ "$EVENT" = schedule ] || [ "$MOVIES_REQUESTED" = true ] ||
-             ! jq -e '.version == 1' .published/movies-data/index.json > /dev/null 2>&1; then
+             ! jq -e '.version == 1' .movies-published/movies-data/index.json > /dev/null 2>&1; then
             echo 'movies=true' >> "$GITHUB_OUTPUT"
           fi
       - if: steps.refresh.outputs.needed == 'true' || steps.refresh.outputs.movies == 'true'
@@ -64,6 +70,12 @@ jobs:
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
         run: node scripts/refresh-catalogue.mjs .published/catalogue-snapshot.json
+      - name: Cache the archived Movies source
+        if: steps.refresh.outputs.movies == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/movies-build/movies.csv
+          key: still-movies-source-13ba9f3a
       - name: Refresh the Movies catalogue
         id: movies
         if: steps.refresh.outputs.movies == 'true'
@@ -75,24 +87,31 @@ jobs:
           mkdir -p "$RUNNER_TEMP/movies-build"
           stage="$RUNNER_TEMP/movies-build"
           source_url='https://huggingface.co/datasets/ada-datadruids/full_tmdb_movies_dataset/resolve/13ba9f3a87c60eaa07b235e1cfd2e16cc1c9105c/TMDB_movie_dataset_v11.csv?download=true'
-          curl -fsSL --retry 3 --max-time 300 -o "$stage/movies.csv" "$source_url"
+          if [ ! -s "$stage/movies.csv" ]; then
+            curl -fsSL --retry 3 --max-time 300 -o "$stage/movies.csv.tmp" "$source_url"
+            printf '%s  %s\n' a9c84f718dd5c02bc2e971656ee706f28aa0257b78d552a50cc9e91fdca1ef46 "$stage/movies.csv.tmp" | sha256sum -c -
+            mv "$stage/movies.csv.tmp" "$stage/movies.csv"
+          fi
           export_day=$(date -u -d yesterday +%m_%d_%Y)
           export_url="https://files.tmdb.org/p/exports/movie_ids_${export_day}.json.gz"
           curl -fsSL --retry 3 --max-time 150 -o "$stage/movie-ids.json.gz" "$export_url"
-          node scripts/refresh-movies.mjs "$stage/movies-recent.json" .published/movies-recent.json
-          python3 scripts/build-movies.py "$stage/movies.csv" "$stage/movie-ids.json.gz" "$stage/movies-data" --recent "$stage/movies-recent.json"
-          git -C .published rm -qr --ignore-unmatch -- movies-data
-          cp -r "$stage/movies-data" .published/
-          cp "$stage/movies-recent.json" .published/movies-recent.json
-          git -C .published add movies-data movies-recent.json
-      - name: Save the validated snapshot
+          previous=.movies-published/movies-recent.json
+          if [ ! -f "$previous" ]; then previous=.published/movies-recent.json; fi
+          mkdir "$stage/published"
+          node scripts/refresh-movies.mjs "$stage/published/movies-recent.json" "$previous"
+          python3 scripts/build-movies.py "$stage/movies.csv" "$stage/movie-ids.json.gz" "$stage/published/movies-data" --recent "$stage/published/movies-recent.json"
+          if [ -d .movies-published ]; then mv .movies-published "$stage/previous"; fi
+          mv "$stage/published" .movies-published
+      - name: Save the validated Movies build
+        if: steps.movies.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .movies-published
+          key: still-movies-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Save catalogue progress
         if: steps.generate.outcome == 'success' || steps.movies.outcome == 'success'
-        env:
-          REFRESH_OUTCOME: ${{ steps.generate.outcome }}
         run: |
-          if [ "$REFRESH_OUTCOME" = success ]; then
-            git -C .published add catalogue-snapshot.json
-          fi
+          git -C .published add catalogue-snapshot.json
           if git -C .published diff --cached --quiet; then
             exit 0
           fi
@@ -114,7 +133,9 @@ jobs:
           if [ "$MOVIES_OUTCOME" = failure ]; then
             echo "::warning::Movies refresh failed. Publishing with the last valid Movies data."
           fi
-          if git -C .published cat-file -e HEAD:movies-data/index.json; then
+          if [ -f .movies-published/movies-data/index.json ]; then
+            cp -r .movies-published/movies-data public/
+          elif git -C .published cat-file -e HEAD:movies-data/index.json; then
             git -C .published archive HEAD movies-data | tar -x -C public
           else
             echo "::error::The first Movies index has not been published."
