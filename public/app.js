@@ -701,6 +701,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   let stalledSeek
   let rangeCheck
   let rangeProbe
+  let audioRangesSupported = false
   let audioReported = false
   let audioBufferPauses = 0
   let videoBufferWaits = 0
@@ -779,6 +780,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
       'Result: ' + reason,
       'Waiting for: ' + (video.seeking || video.readyState < 2 ? 'video' : playRequest?.waiting ? 'audio' : 'playback'),
       'Audio ranges received: ' + (attempt.audioRanges ?? 0),
+      'Video reloads during seek: ' + Number(Boolean(attempt.retried)),
       'Range bytes=1-1: ' + probe,
       'Buffered before: ' + attempt.buffered,
       'Buffered after: ' + formatRanges(video.buffered),
@@ -853,7 +855,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
 
   function failed() {
     if (signal.aborted || stalledSeek) return
-    if (pendingSeek) return stopSeek('media error')
+    if (pendingSeek) {
+      if (!retryVideoSeek(pendingSeek)) stopSeek('media error')
+      return
+    }
     playRequest = undefined
     stopBuffering()
     start.hidden = true
@@ -879,7 +884,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
         const seek = pendingSeek?.applied ? pendingSeek : null
         const position = seek?.target ?? video.currentTime
         void decodedAudio.ready(position, Boolean(seek), () => {
-          if (seek && pendingSeek === seek && playRequest === request) armSeekTimeout(seek)
+          if (seek?.videoReady && pendingSeek === seek && playRequest === request) armSeekTimeout(seek)
         }).then(ready => {
           if (ready && playRequest === request) playVideo()
         })
@@ -945,21 +950,34 @@ function bindPlayer(signal, autoplay, reportAudio) {
     const wait = Math.min(seekIdleTimeout, attempt.deadline - performance.now())
     seekTimer = setTimeout(() => {
       if (pendingSeek === attempt) {
+        if (wait === seekIdleTimeout && retryVideoSeek(attempt)) return
         stopSeek(wait === seekIdleTimeout ? '8 seconds without seek progress' : '25-second seek limit')
       }
     }, wait)
   }
 
-  function startSeek(attempt, reopen = false) {
+  function retryVideoSeek(attempt) {
+    if (!attempt.canRetry || (!video.seeking && video.readyState >= 2) ||
+        (!audioRangesSupported && rangeProbe?.status !== 206) ||
+        performance.now() + seekIdleTimeout > attempt.deadline) return false
+    startSeek(attempt, { reopen: true, retry: true })
+    return true
+  }
+
+  function startSeek(attempt, { reopen = false, retry = false } = {}) {
     stalledSeek = undefined
-    pendingSeek = { ...attempt, applied: false, checkingRange: false, videoReady: false,
-      bufferedEnd: attempt.target, audioRanges: 0, deadline: performance.now() + seekLimit }
+    pendingSeek = { ...attempt, applied: false, checkingRange: false, videoReady: false, retried: retry,
+      canRetry: !reopen && !attempt.inBuffer, bufferedEnd: attempt.target, audioRanges: retry ? attempt.audioRanges : 0,
+      deadline: retry ? attempt.deadline : performance.now() + seekLimit }
     recovery.hidden = true
     error.hidden = true
     showBuffering()
     armSeekTimeout(pendingSeek)
-    if (reopen) video.src = source
-    else applySeek()
+    if (reopen) {
+      playRequest = undefined
+      decodedAudio?.reset(true)
+      video.src = source
+    } else applySeek()
     syncPlayButton()
     updateTime()
   }
@@ -996,6 +1014,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
     const buffered = video.buffered
     const inBuffer = Array.from({ length: buffered.length }, (_, index) =>
       target >= buffered.start(index) && target < buffered.end(index)).some(Boolean)
+    attempt.inBuffer = inBuffer
     if (!inBuffer) {
       if (!rangeProbe && !decodedAudio) {
         clearTimeout(seekTimer)
@@ -1076,9 +1095,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
     if (!audioPromise) {
       audioPromise = audioModule.then(async module => {
         const engine = await module.openBrowserAudio(source, checkRange, signal, () => {
+          audioRangesSupported = true
           if (!pendingSeek?.applied || !playRequest?.waiting) return
           pendingSeek.audioRanges++
-          armSeekTimeout(pendingSeek)
+          if (pendingSeek.videoReady) armSeekTimeout(pendingSeek)
         })
         signal.throwIfAborted()
         audioChoices = engine.choices
@@ -1258,12 +1278,12 @@ function bindPlayer(signal, autoplay, reportAudio) {
     jump.addEventListener('click', () => seekTo((pendingSeek?.target ?? video.currentTime) + Number(jump.dataset.jump)), { signal })
   }
   retry.addEventListener('click', () => {
-    if (stalledSeek) startSeek(stalledSeek, true)
+    if (stalledSeek) startSeek(stalledSeek, { reopen: true })
   })
   resume.addEventListener('click', () => {
     if (!stalledSeek) return
     const target = Math.abs(stalledSeek.target - stalledSeek.from) < 1 ? 0 : stalledSeek.from
-    startSeek({ ...stalledSeek, target }, true)
+    startSeek({ ...stalledSeek, target }, { reopen: true })
   })
   video.addEventListener('click', flipPlayback)
   toggle.addEventListener('click', flipPlayback)

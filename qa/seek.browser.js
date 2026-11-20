@@ -45,14 +45,19 @@ async page => {
     if (mode === 'persistent' || mode === 'recover') {
       await waitForTrace(state => state.failures === 1)
       await page.clock.fastForward(8100)
+    }
+    if (mode === 'persistent') {
+      await waitForTrace(state => state.failures === 2)
+      await page.clock.fastForward(8100)
       await page.getByRole('heading', { name: 'Seek stalled', exact: true }).waitFor()
       const halted = await waitForTrace(state => state.cancelled)
       await page.clock.fastForward(8100)
-      if ((await trace()).trace.length !== halted.trace.length) throw new Error('The player restarted a stalled download')
+      if ((await trace()).trace.length !== halted.trace.length) throw new Error('The player reopened the stalled video more than once')
       if (await page.locator('.buffering').isVisible()) throw new Error('Spinner remained visible after the deadline')
       await page.getByText('Playback details', { exact: true }).click()
-      if (!(await page.locator('.playback-debug pre').innerText()).includes('Range bytes=1-1: HTTP 206')) {
-        throw new Error('The report did not include the partial-content response')
+      const report = await page.locator('.playback-debug pre').innerText()
+      if (!report.includes('Range bytes=1-1: HTTP 206') || !report.includes('Video reloads during seek: 1')) {
+        throw new Error('The report did not include the partial-content response and video reload')
       }
     }
     if (mode === 'persistent') {
@@ -62,7 +67,6 @@ async page => {
         return video.currentTime >= 1 && video.currentTime <= 4 && !video.seeking && !video.paused
       })
     } else if (mode !== 'ignore-range') {
-      if (mode === 'recover') await page.getByRole('button', { name: 'Retry seek' }).click()
       await page.waitForFunction(() => {
         const video = document.querySelector('video')
         return video.currentTime > 12 && !video.seeking && !video.paused &&
@@ -72,5 +76,5 @@ async page => {
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Playback overflowed on mobile')
   }
   if (errors.length) throw new Error(errors.join('; '))
-  return { normal: 'passed', ignoredRange: 'cancelled, buffered seek works', recoverableStall: 'manual retry works', persistentStall: 'cancelled, no automatic retry, resume works' }
+  return { normal: 'passed', ignoredRange: 'cancelled, buffered seek works', recoverableStall: 'automatic reopen reached the target', persistentStall: 'one reopen, then stopped, resume works' }
 }

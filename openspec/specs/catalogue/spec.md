@@ -54,8 +54,9 @@ Screen Room SHALL look for a matching Circle video when the visitor opens the pl
 
 #### Scenario: Circle stalls during a seek
 
-- **WHEN** a seek remains incomplete for eight seconds
-- **THEN** the player cancels loading and offers to retry or resume from the last playable position
+- **WHEN** an unbuffered seek has no video progress for eight seconds and the source has returned valid byte ranges
+- **THEN** the player reopens the video once and seeks to the same position within the original seek deadline
+- **AND** if the seek still stalls, the player cancels loading and offers to retry or resume from the last playable position
 - **AND** playback details show the requested position, the range response available to the browser and the buffered positions
 
 #### Scenario: Circle sends a full file for a byte-range request
