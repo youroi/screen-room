@@ -19,7 +19,7 @@ npm test
 
 The `Publish catalogue` GitHub Actions workflow refreshes the hero and six Home rows at 10:23 UTC daily. Set the API Read Access Token as the `TMDB_READ_TOKEN` Actions secret. Run the workflow with its refresh option enabled for an immediate update. A failed refresh retains the last validated snapshot from `gh-pages`.
 
-Popular uses global, Indian, Korean and Japanese feeds. Trending keeps the original weekly feed order after release checks. Latest Releases requires a digital debut and a streaming, rental or purchase listing in the same market. The market preference is Bangladesh, India, Korea, Japan, then the United States.
+Popular uses global, Indian, Korean and Japanese feeds. Trending keeps the original weekly feed order after release checks. Latest Releases requires a digital debut and a streaming, rental or purchase listing in the same market. Older films newly added to a provider do not qualify. The market preference is Bangladesh, India, Korea, Japan, then the United States.
 
 After checking real Circle playback in Via, record the title's IMDb ID in `scripts/featured-playback.json` with `date` (UTC, YYYY-MM-DD), `audio: true`, `seek: true` and the tested `season` for a series. Only checks within the past 14 days get priority. The refresh job and Home never connect to Circle.
 

@@ -62,6 +62,7 @@ function entry(candidate, details, kind, releasedOn) {
     artwork: 'https://image.tmdb.org/t/p/w342' + candidate.poster_path,
     season: kind === 'series' ? details.last_episode_to_air.season_number : undefined,
     group: animation ? 'animation' : kind,
+    debut: releaseDay(kind === 'movie' ? details.release_date : details.first_air_date) || releasedOn,
     popularity: candidate.popularity ?? 0,
     releasedOn
   }
@@ -114,7 +115,7 @@ export function selectFeatured(candidates, now, checks = playbackChecks) {
   }
 
   const ranked = unique(candidates, item => item.id).sort((a, b) =>
-    verified(b) - verified(a) || Number(b.releasedOn >= recent) - Number(a.releasedOn >= recent) ||
+    verified(b) - verified(a) || Number((b.debut ?? b.releasedOn) >= recent) - Number((a.debut ?? a.releasedOn) >= recent) ||
     byPopularity(a, b) || b.releasedOn.localeCompare(a.releasedOn))
   const groups = ['movie', 'series', 'animation']
   const selected = []
@@ -138,6 +139,7 @@ export function selectFeatured(candidates, now, checks = playbackChecks) {
 export async function buildSnapshot(request, now = new Date(), checks = playbackChecks) {
   const today = now.toISOString().slice(0, 10)
   const from = new Date(+now - 28 * dayMs).toISOString().slice(0, 10)
+  const recentDebut = new Date(+now - 548 * dayMs).toISOString().slice(0, 10)
   const detailsCache = new Map()
 
   function details(kind, id) {
@@ -154,11 +156,15 @@ export async function buildSnapshot(request, now = new Date(), checks = playback
     return rows(details.release_dates, 'TMDB release dates')
   }
 
+  function firstPublicRelease(info) {
+    return releases(info).flatMap(market => publicReleaseDates(market, today)).map(entry => entry.date).sort()[0]
+  }
+
   async function released(kind, candidate) {
     const info = await details(kind, candidate.id)
     if (info.adult === true) return null
     const date = kind === 'movie'
-      ? releases(info).flatMap(market => publicReleaseDates(market, today)).map(entry => entry.date).sort()[0]
+      ? firstPublicRelease(info)
       : hasReleasedEpisode(info, today) && releaseDay(info.last_episode_to_air.air_date)
     return date ? entry(candidate, info, kind, date) : null
   }
@@ -200,20 +206,33 @@ export async function buildSnapshot(request, now = new Date(), checks = playback
 
   async function popular(kind) {
     const endpoint = '/' + (kind === 'movie' ? 'movie' : 'tv') + '/popular'
-    const [global, ...regional] = await Promise.all([
+    const recentSeries = { 'first_air_date.gte': recentDebut, 'first_air_date.lte': today }
+    const [global, recent, ...regional] = await Promise.all([
       feed(endpoint, {}, 2),
-      ...origins.map(country => discover(kind, { with_origin_country: country, 'vote_count.gte': 30 }, 1))
+      kind === 'series' ? discover(kind, { ...recentSeries, 'vote_count.gte': 30 }, 1) : [],
+      ...origins.map(country => discover(kind, {
+        ...(kind === 'series' ? { ...recentSeries, without_genres: '10764,10767' } : {}),
+        with_origin_country: country,
+        'vote_count.gte': 30
+      }, 1))
     ])
-    const candidates = unique(blendPopular(global, regional), item => item.id)
+    const candidates = unique(blendPopular([...recent.slice(0, 12), ...global], regional), item => item.id)
     const selected = await collect(candidates, candidate => released(kind, candidate), rowSize)
     return prioritizeHindi(selected)
   }
 
   async function animation() {
     const query = { with_genres: animationGenre, 'vote_count.gte': 70 }
-    const [movies, series] = await Promise.all([discover('movie', query, 2), discover('series', query, 2)])
-    const candidates = [...movies.map(item => ({ ...item, kind: 'movie' })),
-      ...series.map(item => ({ ...item, kind: 'series' }))].sort(byPopularity)
+    const [newMovies, newSeries, movies, series] = await Promise.all([
+      discover('movie', { ...query, 'primary_release_date.gte': recentDebut, 'primary_release_date.lte': today }, 1),
+      discover('series', { ...query, 'first_air_date.gte': recentDebut, 'first_air_date.lte': today }, 1),
+      discover('movie', query, 2),
+      discover('series', query, 2)
+    ])
+    const asMovies = items => items.map(item => ({ ...item, kind: 'movie' }))
+    const asSeries = items => items.map(item => ({ ...item, kind: 'series' }))
+    const fresh = [...asMovies(newMovies.slice(0, 10)), ...asSeries(newSeries.slice(0, 10))].sort(byPopularity)
+    const candidates = blendPopular(fresh, [asMovies(movies), asSeries(series)])
     return prioritizeHindi(await collect(unique(candidates, item => item.kind + ':' + item.id),
       candidate => released(candidate.kind, candidate), rowSize))
   }
@@ -236,9 +255,11 @@ export async function buildSnapshot(request, now = new Date(), checks = playback
     const candidates = unique(markets.flat(), item => item.id)
     const latest = await collect(candidates, async candidate => {
       const info = await details('movie', candidate.id)
+      const debut = releaseDay(info.release_date)
+      if (info.adult === true || (debut && debut < recentDebut) || firstPublicRelease(info) < recentDebut) return null
       const dates = digitalDates(releases(info), today, from)
       const item = entry(candidate, info, 'movie')
-      if (!item || info.adult === true || !dates.length) return null
+      if (!item || !dates.length) return null
       const providers = await request('/movie/' + candidate.id + '/watch/providers')
       if (!providers?.results || typeof providers.results !== 'object' || Array.isArray(providers.results)) {
         throw new Error('TMDB returned invalid digital provider data.')
