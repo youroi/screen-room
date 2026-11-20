@@ -1,6 +1,6 @@
 import { writeFile, rename } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { imdbId, releaseDay } from '../public/catalogue.js'
+import { imdbId, offlineCollections, releaseDay } from '../public/catalogue.js'
 import { prioritizeHindi } from '../public/hindi-dubs.js'
 import playbackChecks from './featured-playback.json' with { type: 'json' }
 
@@ -245,6 +245,21 @@ export async function buildSnapshot(request, now = new Date(), checks = playback
       candidate => released('series', candidate), rowSize))
   }
 
+  async function curatedShelf(key, additions) {
+    const picks = offlineCollections.find(([shelf]) => shelf === key)[1]
+    const verified = await collect(picks, async pick => {
+      const existing = additions.find(item => item.id === pick.id)
+      if (existing) return existing
+
+      const matches = await request('/find/' + pick.id, { external_source: 'imdb_id' })
+      const candidate = matches[pick.kind === 'movie' ? 'movie_results' : 'tv_results']?.[0]
+      if (!usable(candidate)) return null
+      const item = await released(pick.kind, candidate)
+      return item?.id === pick.id ? item : null
+    }, rowSize)
+    return unique([...prioritizeHindi(verified), ...additions], item => item.id).slice(0, rowSize)
+  }
+
   async function latestDigital() {
     const markets = await Promise.all(regions.map(region => discover('movie', {
       region,
@@ -277,7 +292,9 @@ export async function buildSnapshot(request, now = new Date(), checks = playback
   const kDramas = await dramas()
   const latest = await latestDigital()
   const featured = selectFeatured([...latest, ...trending, ...popularMovies, ...popularSeries, ...animations, ...kDramas], now, checks)
-  const selections = { popularMovies, popularSeries, trending, latest, animation: animations, kDramas }
+  const animationShelf = await curatedShelf('animation', animations)
+  const dramaShelf = await curatedShelf('k-dramas', kDramas)
+  const selections = { popularMovies, popularSeries, trending, latest, animation: animationShelf, kDramas: dramaShelf }
   if (featured.length !== 6 || !Object.values(selections).every(items => items.length)) {
     throw new Error('The refresh did not confirm enough releases for the hero and catalogue rows.')
   }

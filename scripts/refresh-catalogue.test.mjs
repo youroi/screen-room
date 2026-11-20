@@ -66,6 +66,10 @@ test('snapshot keeps weekly order, blends regional popularity and requires a con
       else results = []
     }
     if (results) return { results, total_pages: 1 }
+    if (path.startsWith('/find/')) {
+      assert.equal(params.external_source, 'imdb_id')
+      return { tv_results: path.endsWith('tt21209876') ? [film(15, 'Solo Leveling')] : [] }
+    }
     const id = Number(path.split('/')[2])
     if (path.endsWith('/watch/providers')) {
       const market = { 1: 'US', 4: 'IN', 8: 'US', 10: 'KR' }[id]
@@ -73,7 +77,8 @@ test('snapshot keeps weekly order, blends regional popularity and requires a con
     }
     if (path.startsWith('/tv/')) {
       assert.equal(params.append_to_response, 'external_ids')
-      return { external_ids: { imdb_id: imdb(id) }, ...tvEpisode(id === 6 ? '2026-11-20' : '2026-11-18') }
+      const externalId = { 12: 'tt26471411', 15: 'tt21209876' }[id] ?? imdb(id)
+      return { external_ids: { imdb_id: externalId }, ...tvEpisode(id === 6 ? '2026-11-20' : '2026-11-18') }
     }
     assert.equal(params.append_to_response, 'external_ids,release_dates')
     const dates = {
@@ -93,9 +98,9 @@ test('snapshot keeps weekly order, blends regional popularity and requires a con
   assert.equal(snapshot.version, 4)
   assert.deepEqual(ids(snapshot.trending), [1, 7, 4].map(imdb))
   assert.deepEqual(ids(snapshot.popularMovies), [3, 4, 1, 10, 8, 9].map(imdb))
-  assert.deepEqual(ids(snapshot.popularSeries), [7, 12, 13].map(imdb))
-  assert.deepEqual(ids(snapshot.animation), [9, 13].map(imdb))
-  assert.deepEqual(ids(snapshot.kDramas), [12].map(imdb))
+  assert.deepEqual(ids(snapshot.popularSeries), [imdb(7), 'tt26471411', imdb(13)])
+  assert.deepEqual(ids(snapshot.animation), ['tt21209876', imdb(9), imdb(13)])
+  assert.deepEqual(ids(snapshot.kDramas), ['tt26471411'])
   assert.deepEqual(ids(snapshot.latest), [1, 10, 4].map(imdb))
   assert.deepEqual([...new Set(marketQueries)], ['BD', 'IN', 'KR', 'JP', 'US'])
   assert.equal(requested.filter(path => path === '/movie/1').length, 1)

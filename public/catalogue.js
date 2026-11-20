@@ -81,31 +81,47 @@ export const fallbackFeatured = [
   ...picks('movie', [['tt32820897', 'Demon Slayer: Infinity Castle']])
 ]
 
-const fallbackCollections = [
+const curatedCollections = [
   {
     key: 'animation',
     items: [
+      ...picks('series', [['tt21209876', 'Solo Leveling']]),
+      ...picks('movie', [['tt32820897', 'Demon Slayer: Infinity Castle']]),
+      ...picks('series', [
+        ['tt22248376', "Frieren: Beyond Journey’s End"],
+        ['tt11126994', 'Arcane'],
+        ['tt12343534', 'Jujutsu Kaisen']
+      ]),
       ...picks('movie', [
-        ['tt0245429', 'Spirited Away'], ['tt4633694', 'Spider-Man: Into the Spider-Verse'],
-        ['tt0910970', 'WALL·E'], ['tt5311514', 'Your Name.'], ['tt0114709', 'Toy Story'],
-        ['tt0382932', 'Ratatouille'], ['tt1049413', 'Up']
+        ['tt30472557', 'Chainsaw Man – The Movie: Reze Arc'],
+        ['tt9362722', 'Spider-Man: Across the Spider-Verse']
       ]),
       ...picks('series', [
-        ['tt11126994', 'Arcane'], ['tt0417299', 'Avatar: The Last Airbender'],
-        ['tt13309742', 'Blue Eye Samurai'], ['tt0213338', 'Cowboy Bebop'],
+        ['tt13309742', 'Blue Eye Samurai'],
+        ['tt26743760', 'The Apothecary Diaries'],
         ['tt2560140', 'Attack on Titan']
+      ]),
+      ...picks('movie', [
+        ['tt29623480', 'The Wild Robot'],
+        ['tt14205554', 'KPop Demon Hunters']
       ])
     ]
   },
   {
     key: 'k-dramas',
     items: picks('series', [
-      ['tt10850932', 'Crash Landing on You'], ['tt24640580', 'Moving'],
-      ['tt20869502', 'Extraordinary Attorney Woo'], ['tt6611916', 'Kingdom'],
-      ['tt21344706', 'The Glory'], ['tt14819828', 'Business Proposal'],
-      ['tt7923710', 'My Mister'], ['tt14518756', 'Hometown Cha-Cha-Cha'],
-      ['tt27668559', 'Queen of Tears'], ['tt11769304', 'Hospital Playlist'],
-      ['tt17513352', 'Twenty Five Twenty One']
+      ['tt26471411', 'When Life Gives You Tangerines'],
+      ['tt24640580', 'Moving'],
+      ['tt20234568', 'Weak Hero'],
+      ['tt31324295', 'Lovely Runner'],
+      ['tt27446493', 'Twinkling Watermelon'],
+      ['tt21344706', 'The Glory'],
+      ['tt27668559', 'Queen of Tears'],
+      ['tt36724865', 'Our Unwritten Seoul'],
+      ['tt28106730', 'The Trauma Code: Heroes on Call'],
+      ['tt7923710', 'My Mister'],
+      ['tt10850932', 'Crash Landing on You'],
+      ['tt11769304', 'Hospital Playlist']
     ])
   }
 ]
@@ -142,13 +158,13 @@ export async function refreshedCollections(signal) {
   return {
     featured: featured.length === 6 ? featured : fallbackFeatured,
     rows: collections.map(({ key, field }) => {
-      const items = data[field] ?? fallbackCollections.find(row => row.key === key)?.items ?? []
+      const items = data[field] ?? curatedCollections.find(row => row.key === key)?.items ?? []
       return [key, snapshotItems(key === 'latest' ? items.filter(item => item?.releaseType === 'digital') : items, 30)]
     })
   }
 }
 
-export const offlineCollections = fallbackCollections.map(({ key, items }) => [key, items])
+export const offlineCollections = curatedCollections.map(({ key, items }) => [key, items])
 
 export async function search(query, signal) {
   const results = await Promise.allSettled([...kinds].map(async kind =>

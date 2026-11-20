@@ -1,4 +1,4 @@
-import { browse, search, title, fallbackFeatured, collections, offlineCollections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=8'
+import { browse, search, title, fallbackFeatured, collections, offlineCollections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=9'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
 const main = document.querySelector('main')
