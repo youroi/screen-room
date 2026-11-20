@@ -39,7 +39,7 @@ jobs:
           ref: gh-pages
           path: .published
       - name: Restore the last Movies build
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .movies-published
           key: still-movies-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -73,7 +73,7 @@ jobs:
         run: node scripts/refresh-catalogue.mjs .published/catalogue-snapshot.json
       - name: Cache the archived Movies source
         if: steps.refresh.outputs.movies == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/movies-build/movies.csv
           key: still-movies-source-13ba9f3a
@@ -105,7 +105,7 @@ jobs:
           mv "$stage/published" .movies-published
       - name: Save the validated Movies build
         if: steps.movies.outcome == 'success'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .movies-published
           key: still-movies-v1-${{ github.run_id }}-${{ github.run_attempt }}
