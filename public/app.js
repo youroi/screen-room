@@ -118,8 +118,9 @@ main.addEventListener('error', event => {
 }, true)
 
 function card(item, { eager = false, showKind = false, shelf = false } = {}) {
+  const poster = artwork(item, { eager, sizes: shelf ? undefined : '(min-width: 671px) 180px, 45vw' })
   return '<li><a class="title-card" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
-    '<div class="poster">' + artwork(item, { eager, sizes: shelf ? undefined : '(min-width: 671px) 180px, 45vw' }) + '</div>' +
+    '<div class="poster">' + (shelf ? '<template>' + poster + '</template>' : poster) + '</div>' +
     '<h' + (shelf ? '3' : '2') + '>' + escape(item.title) + '</h' + (shelf ? '3' : '2') + '>' +
     (shelf ? '' : '<span class="meta">' + (showKind ? metadata(item) : escape(item.year)) + '</span>') +
     '</a></li>'
@@ -315,6 +316,22 @@ function shelf({ key, label }) {
     '</h2><div id="shelf-body-' + key + '">' + shelfTrack(key) + '</div></section>'
 }
 
+function loadShelfArtwork(signal) {
+  const observer = new IntersectionObserver(entries => {
+    for (const { isIntersecting, target } of entries) {
+      if (!isIntersecting) continue
+      const template = target.firstElementChild
+      if (template instanceof HTMLTemplateElement) template.replaceWith(template.content)
+      observer.unobserve(target)
+    }
+  }, { rootMargin: '180px 0px', scrollMargin: '0px 180px' })
+
+  for (const template of main.querySelectorAll('.shelf-track .poster > template')) {
+    observer.observe(template.parentElement)
+  }
+  signal.addEventListener('abort', () => observer.disconnect(), { once: true })
+}
+
 async function home(signal) {
   routeLabel('')
   paint('<h1 class="sr-only">Home</h1><div class="featured" aria-hidden="true">' +
@@ -352,6 +369,7 @@ async function home(signal) {
       : '<div class="row-status"><span>This row is unavailable.</span>' + retryButton + '</div>'
     if (items?.length) body.firstElementChild.scrollLeft = shelfPositions.get(key) ?? 0
   }
+  loadShelfArtwork(signal)
 }
 
 async function list(url, signal) {
