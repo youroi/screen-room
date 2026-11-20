@@ -25,6 +25,8 @@ document.querySelector('.skip').addEventListener('click', event => {
 })
 const searchIcon = '<span class="search-icon" aria-hidden="true"></span>'
 const playIcon = '<span class="play-icon" aria-hidden="true"></span>'
+const seekIdleTimeout = 8000
+const seekLimit = 25000
 const glyphs = {
   pause: '<path d="M9 5v14m6-14v14"/>',
   play: '<path d="m9 5 11 7-11 7z"/>',
@@ -736,6 +738,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
         break
       }
     }
+    if (pendingSeek?.applied && end > pendingSeek.bufferedEnd) {
+      pendingSeek.bufferedEnd = end
+      armSeekTimeout(pendingSeek)
+    }
     seek.style.setProperty('--buffer-start', (duration ? start / duration * 100 : 0) + '%')
     seek.style.setProperty('--buffer-end', (duration ? end / duration * 100 : 0) + '%')
   }
@@ -771,6 +777,8 @@ function bindPlayer(signal, autoplay, reportAudio) {
     seekDetails = [
       'Seek ' + formatTime(attempt.from) + ' → ' + formatTime(attempt.target),
       'Result: ' + reason,
+      'Waiting for: ' + (video.seeking || video.readyState < 2 ? 'video' : playRequest?.waiting ? 'audio' : 'playback'),
+      'Audio ranges received: ' + (attempt.audioRanges ?? 0),
       'Range bytes=1-1: ' + probe,
       'Buffered before: ' + attempt.buffered,
       'Buffered after: ' + formatRanges(video.buffered),
@@ -868,8 +876,11 @@ function bindPlayer(signal, autoplay, reportAudio) {
       syncPlayButton()
       if (decodedAudio) {
         request.waiting = true
-        const position = pendingSeek?.applied ? pendingSeek.target : video.currentTime
-        void decodedAudio.ready(position, pendingSeek?.applied).then(ready => {
+        const seek = pendingSeek?.applied ? pendingSeek : null
+        const position = seek?.target ?? video.currentTime
+        void decodedAudio.ready(position, Boolean(seek), () => {
+          if (seek && pendingSeek === seek && playRequest === request) armSeekTimeout(seek)
+        }).then(ready => {
           if (ready && playRequest === request) playVideo()
         })
       }
@@ -902,6 +913,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function finishSeek() {
     const attempt = pendingSeek
     if (!attempt?.applied || video.seeking) return
+    if (!attempt.videoReady && video.readyState >= 2) {
+      attempt.videoReady = true
+      armSeekTimeout(attempt)
+    }
     const needsPlayback = attempt.play && !video.ended && attempt.target < duration
     if (video.readyState < (needsPlayback ? 3 : 2)) return
     if (needsPlayback && video.currentTime < attempt.target + 0.2) return
@@ -925,14 +940,24 @@ function bindPlayer(signal, autoplay, reportAudio) {
     finishSeek()
   }
 
-  function startSeek(attempt, reopen = false) {
+  function armSeekTimeout(attempt) {
     clearTimeout(seekTimer)
+    const wait = Math.min(seekIdleTimeout, attempt.deadline - performance.now())
+    seekTimer = setTimeout(() => {
+      if (pendingSeek === attempt) {
+        stopSeek(wait === seekIdleTimeout ? '8 seconds without seek progress' : '25-second seek limit')
+      }
+    }, wait)
+  }
+
+  function startSeek(attempt, reopen = false) {
     stalledSeek = undefined
-    pendingSeek = { ...attempt, applied: false, checkingRange: false }
+    pendingSeek = { ...attempt, applied: false, checkingRange: false, videoReady: false,
+      bufferedEnd: attempt.target, audioRanges: 0, deadline: performance.now() + seekLimit }
     recovery.hidden = true
     error.hidden = true
     showBuffering()
-    seekTimer = setTimeout(() => stopSeek('8-second timeout'), 8000)
+    armSeekTimeout(pendingSeek)
     if (reopen) video.src = source
     else applySeek()
     syncPlayButton()
@@ -943,12 +968,12 @@ function bindPlayer(signal, autoplay, reportAudio) {
     const attempt = pendingSeek
     if (!attempt || signal.aborted) return
     clearTimeout(seekTimer)
+    showDebug(attempt, reason)
     stalledSeek = attempt
     pendingSeek = undefined
     playRequest = undefined
     stopBuffering()
-    showDebug(attempt, reason)
-    decodedAudio?.reset()
+    decodedAudio?.reset(true)
     video.pause()
     video.removeAttribute('src')
     video.load()
@@ -1044,13 +1069,17 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=10')
+      audioModule = import('./browser-audio.js?v=11')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return
     if (!audioPromise) {
       audioPromise = audioModule.then(async module => {
-        const engine = await module.openBrowserAudio(source, checkRange, signal)
+        const engine = await module.openBrowserAudio(source, checkRange, signal, () => {
+          if (!pendingSeek?.applied || !playRequest?.waiting) return
+          pendingSeek.audioRanges++
+          armSeekTimeout(pendingSeek)
+        })
         signal.throwIfAborted()
         audioChoices = engine.choices
         showAudioOptions(audioChoices, audioChoices[0]?.index)

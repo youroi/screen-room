@@ -71,9 +71,9 @@ async function registerAacDecoder({ registerDecoder, CustomAudioDecoder, AudioSa
   })
 }
 
-export async function openBrowserAudio(source, checkRange, signal) {
+export async function openBrowserAudio(source, checkRange, signal, onRange) {
   const readMedia = window.screenRoomReadMedia
-  const via = readMedia && viaSource(source, readMedia, signal)
+  const via = readMedia && viaSource(source, readMedia, signal, onRange)
   const [bunny, range] = await Promise.all([
     import(audioPackage + 'mediabunny@1.66.0/+esm'), via ? via.getSize().then(() => null) : checkRange()
   ])
@@ -127,26 +127,29 @@ export async function openBrowserAudio(source, checkRange, signal) {
   }
 }
 
-export function viaSource(source, readMedia, signal) {
+export function viaSource(source, readMedia, signal, onRange) {
   let size
   let header
 
   async function readRange(start, end, requestSignal = signal) {
     const { headers, bytes } = await readMedia(source, start, end, requestSignal)
+    requestSignal.throwIfAborted()
     const reported = /^content-range:\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/mi.exec(headers)
     const total = Number(reported?.[3])
     if (Number(reported?.[1]) !== start || Number(reported?.[2]) !== end - 1 ||
         !Number.isSafeInteger(total) || total < end || (size !== undefined && total !== size)) {
       throw new Error('The file server returned a different byte range.')
     }
-    size = total
     const data = new Uint8Array(bytes)
+    if (data.byteLength !== end - start) throw new Error('The file server returned an incomplete byte range.')
+    size = total
     if (header?.length === start && end <= maxRangeSize) {
       const prefix = new Uint8Array(end)
       prefix.set(header)
       prefix.set(data, start)
       header = prefix
     }
+    onRange?.()
     return data
   }
 
@@ -211,7 +214,7 @@ function readBuffers(sink, position) {
   return { position, end: position, buffers: sink.buffers(position), entries: [] }
 }
 
-async function fillAudio(job, until) {
+async function fillAudio(job, until, onProgress) {
   while (!job.done && !job.closed && job.end < until) {
     if (job.error) throw job.error
     job.pending ??= job.buffers.next().then(({ done, value }) => {
@@ -224,7 +227,9 @@ async function fillAudio(job, until) {
       job.error = error
       throw error
     }).finally(() => { job.pending = undefined })
+    const previousEnd = job.end
     await job.pending
+    if (job.end > previousEnd) onProgress?.()
   }
 }
 
@@ -262,15 +267,15 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     scheduled.clear()
   }
 
-  function reset() {
+  function reset(restartReader = false) {
     stop()
     release(job)
     job = undefined
+    if (restartReader) sink.restart()
   }
 
   function prime(position, { restartReader = false, afterSeek = false } = {}) {
-    reset()
-    if (restartReader) sink.restart()
+    reset(restartReader)
     job = readBuffers(sink, position)
     job.refilling = afterSeek
     void fillAudio(job, position + initialAudioBuffer * video.playbackRate).catch(() => {})
@@ -281,11 +286,11 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     return job
   }
 
-  async function ready(position, afterSeek = false) {
+  async function ready(position, afterSeek = false, onProgress) {
     const current = bufferAt(position)
     try {
       const lead = afterSeek || current.refilling ? refillAudioBuffer : initialAudioBuffer
-      await fillAudio(current, position + lead * video.playbackRate)
+      await fillAudio(current, position + lead * video.playbackRate, onProgress)
       if (job !== current || signal.aborted) return false
       current.refilling = false
       if (current.entries.length || position >= video.duration - 1) return true

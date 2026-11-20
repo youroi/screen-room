@@ -37,21 +37,26 @@ test('Via reads only bounded byte ranges of the current Circle MKV', async () =>
 test('Via audio falls back to a one-byte size probe for short files', async () => {
   const signal = new AbortController().signal
   let size = 800
+  let received = 0
+  let truncated = false
   const calls = []
   const data = viaSource('http://ftp16.circleftp.net/Pilot.mkv', async (source, start, end) => {
     assert.equal(source, 'http://ftp16.circleftp.net/Pilot.mkv')
     calls.push([start, end])
     return {
       headers: 'Content-Range: bytes ' + start + '-' + (end - 1) + '/' + size,
-      bytes: new Uint8Array(end - start).fill(7).buffer
+      bytes: new Uint8Array(end - start - Number(truncated)).fill(7).buffer
     }
-  }, signal)
+  }, signal, () => { received++ })
 
   assert.equal(await data.getSize(), 800)
   assert.deepEqual(await readBytes(data, 20, 23), Uint8Array.of(7, 7, 7))
   assert.deepEqual(calls, [[0, 128 * 1024], [0, 1], [20, 23]])
+  truncated = true
+  await assert.rejects(readBytes(data, 23, 25), /incomplete byte range/)
   size = 803
   await assert.rejects(readBytes(data, 23, 25), /different byte range/)
+  assert.equal(received, 2)
 })
 
 test('Via audio reads large blocks in bounded parallel batches and preserves byte order', async () => {
