@@ -46,14 +46,21 @@ def released_on(value, today):
         return None
 
 
-def movie(id, imdb, title, released, poster, countries, genres, popularity, today):
+def qualified_rating(value, votes):
+    rating = score(value)
+    return round(rating, 1) if score(votes) >= 50 and 0 < rating <= 10 else None
+
+
+def movie(id, imdb, title, released, poster, countries, genres, popularity, today, rating=None):
     released = released_on(released, today)
     title = title.strip()
     if not id or not imdb or not IMDB.fullmatch(imdb) or not title or not released:
         return None
+    card = [imdb, title[:280], released[:4], poster if POSTER.fullmatch(poster or "") else None]
+    if rating is not None:
+        card.append(rating)
     return (int(id), score(popularity), sorted(set(countries) & set(COUNTRIES.values())),
-            sorted(set(genres) & GENRES),
-            [imdb, title[:280], released[:4], poster if POSTER.fullmatch(poster or "") else None])
+            sorted(set(genres) & GENRES), card)
 
 
 def read_movies(source, recent, today):
@@ -65,13 +72,17 @@ def read_movies(source, recent, today):
                 continue
             item = movie(row["id"], row["imdb_id"], row["title"], row["release_date"], row["poster_path"],
                          production_codes(row["production_countries"]), row["genres"].split(", "),
-                         row["popularity"], today)
+                         row["popularity"], today, qualified_rating(row.get("vote_average"), row.get("vote_count")))
             if item:
                 items[item[0]] = item
     if recent:
         for entry in json.loads(recent.read_text())["items"]:
+            rating = qualified_rating(entry.get("rating"), entry.get("votes"))
+            if "votes" not in entry and entry["id"] in items:
+                existing = items[entry["id"]][-1]
+                rating = existing[4] if len(existing) == 5 else None
             item = movie(entry["id"], entry["imdb"], entry["title"], entry["released"], entry["poster"],
-                         entry["countries"], entry["genres"], entry["popularity"], today)
+                         entry["countries"], entry["genres"], entry["popularity"], today, rating)
             if item:
                 items[item[0]] = item
     return items
@@ -123,7 +134,7 @@ def publish(items, target, revision):
                        {"revision": revision, "items": cards[offset:offset + RECORDS_PER_SHARD]})
 
     write_json(target / "index.json", {
-        "version": 1, "revision": revision, "pagesPerShard": PAGES_PER_SHARD, "counts": counts
+        "version": 2, "revision": revision, "pagesPerShard": PAGES_PER_SHARD, "counts": counts
     })
     return counts
 

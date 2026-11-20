@@ -436,6 +436,24 @@ h1 { font-size: clamp(1.9rem, 4vw, 3.15rem); font-weight: 650; line-height: 1.06
 .movie-results .pages { gap: 6px; }
 .movie-results .pages .button { padding-inline: 10px; }
 .movie-results .pages span { white-space: nowrap; }
+.poster-rating {
+  position: absolute;
+  inset: 7px auto auto 7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: #0c0d10ed;
+  color: var(--ink);
+  font-size: .73rem;
+  font-weight: 650;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.poster-rating span { color: var(--accent); }
 .movie-grid .title-card h2 { font-size: .95rem; font-weight: 600; }
 .movie-grid.skeleton li::after { display: block; height: 45px; margin-top: 10px; content: ""; }
 

@@ -1,4 +1,4 @@
-import { movieCountries, movieGenres, movieIndex, moviePage, movieSelection, moviesRoute } from './movies.js?v=1'
+import { movieCountries, movieGenres, movieIndex, moviePage, movieSelection, moviesRoute } from './movies.js?v=2'
 import { browse, search, title, fallbackFeatured, collections, offlineCollections, refreshedCollections, imdbId, kinds } from './catalogue.js?v=9'
 import { browserCircleStream, circleVideo, circleWebOrigins, mediaType, probeByteRange } from './playback.js?v=9'
 
@@ -120,8 +120,11 @@ main.addEventListener('error', event => {
 
 function card(item, { eager = false, showKind = false, shelf = false } = {}) {
   const poster = artwork(item, { eager, sizes: shelf ? undefined : '(min-width: 671px) 180px, 45vw' })
+  const score = item.rating?.toFixed(1)
+  const rating = score ? '<span class="poster-rating" role="img" aria-label="Rating ' + score +
+    ' out of 10"><span aria-hidden="true">★</span> ' + score + '</span>' : ''
   return '<li><a class="title-card" data-route href="' + escape(routeTarget(itemRoute('title', item))) + '">' +
-    '<div class="poster">' + (shelf ? '<template>' + poster + '</template>' : poster) + '</div>' +
+    '<div class="poster">' + (shelf ? '<template>' + poster + '</template>' : poster) + rating + '</div>' +
     '<h' + (shelf ? '3' : '2') + '>' + escape(item.title) + '</h' + (shelf ? '3' : '2') + '>' +
     (shelf ? '' : '<span class="meta">' + (showKind ? metadata(item) : escape(item.year)) + '</span>') +
     '</a></li>'

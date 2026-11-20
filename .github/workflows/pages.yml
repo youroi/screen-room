@@ -56,8 +56,8 @@ jobs:
             echo 'needed=true' >> "$GITHUB_OUTPUT"
           fi
           if [ "$EVENT" = schedule ] || [ "$MOVIES_REQUESTED" = true ] ||
-             { ! jq -e '.version == 1' .movies-published/movies-data/index.json > /dev/null 2>&1 &&
-               ! jq -e '.version == 1' .published/movies-data/index.json > /dev/null 2>&1; }; then
+             { ! jq -e '.version == 2' .movies-published/movies-data/index.json > /dev/null 2>&1 &&
+               ! jq -e '.version == 2' .published/movies-data/index.json > /dev/null 2>&1; }; then
             echo 'movies=true' >> "$GITHUB_OUTPUT"
           fi
       - if: steps.refresh.outputs.needed == 'true' || steps.refresh.outputs.movies == 'true'
@@ -83,6 +83,8 @@ jobs:
         continue-on-error: true
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          MOVIES_REQUESTED: ${{ inputs.refresh_movies }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/movies-build"
@@ -99,7 +101,11 @@ jobs:
           previous=.movies-published/movies-recent.json
           if [ ! -f "$previous" ]; then previous=.published/movies-recent.json; fi
           mkdir "$stage/published"
-          node scripts/refresh-movies.mjs "$stage/published/movies-recent.json" "$previous"
+          mode=()
+          if [ "$EVENT" != schedule ] && [ "$MOVIES_REQUESTED" != true ] && [ -f "$previous" ]; then
+            mode+=(--ratings-only)
+          fi
+          node scripts/refresh-movies.mjs "$stage/published/movies-recent.json" "$previous" "${mode[@]}"
           python3 scripts/build-movies.py "$stage/movies.csv" "$stage/movie-ids.json.gz" "$stage/published/movies-data" --recent "$stage/published/movies-recent.json"
           if [ -d .movies-published ]; then mv .movies-published "$stage/previous"; fi
           mv "$stage/published" .movies-published
@@ -111,8 +117,17 @@ jobs:
           key: still-movies-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Save catalogue progress
         if: steps.generate.outcome == 'success' || steps.movies.outcome == 'success'
+        env:
+          REFRESH_OUTCOME: ${{ steps.generate.outcome }}
+          MOVIES_OUTCOME: ${{ steps.movies.outcome }}
         run: |
-          git -C .published add catalogue-snapshot.json
+          if [ "$REFRESH_OUTCOME" = success ]; then
+            git -C .published add catalogue-snapshot.json
+          fi
+          if [ "$MOVIES_OUTCOME" = success ]; then
+            cp .movies-published/movies-recent.json .published/movies-recent.json
+            git -C .published add movies-recent.json
+          fi
           if git -C .published diff --cached --quiet; then
             exit 0
           fi

@@ -72,26 +72,31 @@ async function discover(request, from, through, minimumVotes) {
   return candidates.map(item => item.id).filter(id => Number.isSafeInteger(id) && id > 0)
 }
 
-export async function refreshMovies(request, previous, now) {
+export async function refreshMovies(request, previous, now, ratingsOnly = false) {
   const today = day(now)
   const start = month(startYear, startMonth)
   const latestMonth = month(now.getUTCFullYear(), now.getUTCMonth())
   let cursor = previous?.historyFrom ? new Date(previous.historyFrom + 'T00:00:00Z') : latestMonth
-  const windowDays = previous ? 14 : 35
-  const ids = new Set(await discover(request, day(new Date(+now - windowDays * dayMs)), today, 0))
-
-  if (!previous) {
-    // Seed widely covered releases while the full, vote-independent backfill catches up.
-    const seed = await discover(request, day(start), today, 5)
-    for (const id of seed) ids.add(id)
-  } else if (cursor > start) {
-    const from = new Date(Math.max(+start, +month(cursor.getUTCFullYear(), cursor.getUTCMonth() - 2)))
-    const historical = await discover(request, day(from), day(new Date(+cursor - dayMs)), 0)
-    for (const id of historical) ids.add(id)
-    cursor = from
+  const ids = new Set()
+  const movies = new Map((previous?.items ?? []).map(item => [item.id, item]))
+  if (!ratingsOnly) {
+    const windowDays = previous ? 14 : 35
+    for (const id of await discover(request, day(new Date(+now - windowDays * dayMs)), today, 0)) ids.add(id)
+    if (!previous) {
+      // Seed widely covered releases while the full, vote-independent backfill catches up.
+      const seed = await discover(request, day(start), today, 5)
+      for (const id of seed) ids.add(id)
+    } else if (cursor > start) {
+      const from = new Date(Math.max(+start, +month(cursor.getUTCFullYear(), cursor.getUTCMonth() - 2)))
+      const historical = await discover(request, day(from), day(new Date(+cursor - dayMs)), 0)
+      for (const id of historical) ids.add(id)
+      cursor = from
+    }
   }
 
-  const movies = new Map((previous?.items ?? []).map(item => [item.id, item]))
+  const missingRatings = [...movies.values()].filter(item => !Number.isSafeInteger(item.votes) && !ids.has(item.id))
+    .sort((a, b) => b.popularity - a.popularity)
+  for (const item of missingRatings.slice(0, 144)) ids.add(item.id)
   const candidates = [...ids]
   for (let offset = 0; offset < candidates.length; offset += 32) {
     const page = await Promise.all(candidates.slice(offset, offset + 32).map(id => request('/movie/' + id, { language: 'en-US' })))
@@ -106,6 +111,7 @@ export async function refreshMovies(request, previous, now) {
         throw new Error('TMDB returned invalid production metadata.')
       }
       movies.set(id, { id, imdb, title, released, poster, popularity,
+        rating: movie.vote_average, votes: movie.vote_count,
         countries: movie.production_countries.map(country => country.iso_3166_1),
         genres: movie.genres.map(genre => genre.name) })
     }
@@ -116,8 +122,8 @@ export async function refreshMovies(request, previous, now) {
 if (import.meta.main) {
   const token = process.env.TMDB_READ_TOKEN?.trim()
   if (!token) throw new Error('Set the TMDB_READ_TOKEN Actions secret to refresh Movies.')
-  const [output, previous] = process.argv.slice(2)
-  const data = await refreshMovies(lookup(token), await readPrevious(previous), new Date())
+  const [output, previous, mode] = process.argv.slice(2)
+  const data = await refreshMovies(lookup(token), await readPrevious(previous), new Date(), mode === '--ratings-only')
   await writeFile(output, JSON.stringify(data) + '\n')
   console.log('Recent movie metadata:', data.items.length, 'Historical backfill cursor:', data.historyFrom)
 }

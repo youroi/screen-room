@@ -46,7 +46,7 @@ async function readIndex(path, signal, cache) {
 
 export async function movieIndex(signal, cache) {
   const index = await readIndex('index.json', signal, cache)
-  if (index?.version !== 1 || !/^\d{8}T\d{6}Z$/.test(index.revision) ||
+  if (![1, 2].includes(index?.version) || !/^\d{8}T\d{6}Z$/.test(index.revision) ||
       !Number.isSafeInteger(index.pagesPerShard) || index.pagesPerShard < 1 || index.pagesPerShard > 24 ||
       !Number.isSafeInteger(index.counts?.['all/all']) || index.counts['all/all'] < 1) throw invalidCatalogue()
   return index
@@ -69,12 +69,13 @@ export async function moviePage(selection, index, signal, cache) {
 
   const items = rows.map(row => {
     if (!Array.isArray(row)) throw invalidCatalogue()
-    const [id, title, year, poster] = row
+    const [id, title, year, poster, score] = row
     if (!/^tt\d{5,12}$/.test(id) || typeof title !== 'string' || !title || !/^\d{4}$/.test(year)) {
       throw invalidCatalogue()
     }
     const artwork = /^\/[\w-]+\.(jpg|jpeg|png|webp)$/i.test(poster) ? 'https://image.tmdb.org/t/p/w342' + poster : null
-    return { id, title, kind: 'movie', year, artwork }
+    const rating = Number.isFinite(score) && score > 0 && score <= 10 ? score : null
+    return { id, title, kind: 'movie', year, artwork, rating }
   })
   return { items, total, pages }
 }
