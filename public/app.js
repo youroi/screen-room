@@ -869,7 +869,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
       if (decodedAudio) {
         request.waiting = true
         const position = pendingSeek?.applied ? pendingSeek.target : video.currentTime
-        void decodedAudio.ready(position).then(ready => {
+        void decodedAudio.ready(position, pendingSeek?.applied).then(ready => {
           if (ready && playRequest === request) playVideo()
         })
       }
@@ -916,7 +916,10 @@ function bindPlayer(signal, autoplay, reportAudio) {
     pendingSeek.applied = true
     pendingSeek.target = Math.min(pendingSeek.target, video.duration)
     if (audioContext && audioRecovery !== 'native' && !userMuted && volumeLevel > 0) video.pause()
-    decodedAudio?.prime(pendingSeek.target, Math.abs(pendingSeek.target - pendingSeek.from) > 10)
+    decodedAudio?.prime(pendingSeek.target, {
+      restartReader: Math.abs(pendingSeek.target - pendingSeek.from) > 10,
+      afterSeek: true
+    })
     video.currentTime = pendingSeek.target
     if (pendingSeek.play) play()
     finishSeek()
@@ -1041,7 +1044,7 @@ function bindPlayer(signal, autoplay, reportAudio) {
   function prepareAudio() {
     if (!matroska || typeof AudioContext !== 'function') return
     if (!audioModule) {
-      audioModule = import('./browser-audio.js?v=9')
+      audioModule = import('./browser-audio.js?v=10')
       void audioModule.catch(() => {})
     }
     if (!video.currentSrc) return

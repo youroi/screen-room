@@ -268,10 +268,11 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     job = undefined
   }
 
-  function prime(position, restartReader = false) {
+  function prime(position, { restartReader = false, afterSeek = false } = {}) {
     reset()
     if (restartReader) sink.restart()
     job = readBuffers(sink, position)
+    job.refilling = afterSeek
     void fillAudio(job, position + initialAudioBuffer * video.playbackRate).catch(() => {})
   }
 
@@ -280,10 +281,10 @@ export function playDecodedAudio(video, sink, context, signal, { volume, started
     return job
   }
 
-  async function ready(position) {
+  async function ready(position, afterSeek = false) {
     const current = bufferAt(position)
     try {
-      const lead = current.refilling ? refillAudioBuffer : initialAudioBuffer
+      const lead = afterSeek || current.refilling ? refillAudioBuffer : initialAudioBuffer
       await fillAudio(current, position + lead * video.playbackRate)
       if (job !== current || signal.aborted) return false
       current.refilling = false

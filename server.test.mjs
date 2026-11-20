@@ -179,6 +179,35 @@ test('decoded audio waits for a longer reserve after an underrun', { timeout: 20
   assert.equal(readers, 1)
 })
 
+test('decoded audio waits for the refill reserve before resuming a seek', { timeout: 2000 }, async t => {
+  const controller = new AbortController()
+  t.after(() => controller.abort())
+  const video = Object.assign(new EventTarget(), {
+    paused: true, currentTime: 0, playbackRate: 1, readyState: 4, duration: 60
+  })
+  const context = { createGain: () => ({ gain: {}, connect() {}, disconnect() {} }) }
+  const shortBuffer = Promise.withResolvers()
+  const download = Promise.withResolvers()
+  const sink = {
+    async *buffers(position) {
+      for (let frame = 0; frame < 30; frame++) {
+        if (position === 12 && frame === 6) {
+          shortBuffer.resolve()
+          await download.promise
+        }
+        yield { timestamp: position + frame / 10, buffer: { duration: 0.1 } }
+      }
+    }
+  }
+  const audio = playDecodedAudio(video, sink, context, controller.signal, { volume: 1, failed: shortBuffer.reject })
+  assert.ok(await audio.ready(0))
+  audio.prime(12, { afterSeek: true })
+  const ready = audio.ready(12)
+  assert.equal(await Promise.race([shortBuffer.promise.then(() => 'short buffer'), ready]), 'short buffer')
+  download.resolve()
+  assert.equal(await ready, true)
+})
+
 async function listen(server, context) {
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
