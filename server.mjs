@@ -119,7 +119,25 @@ export function createApp(circle = createCircle()) {
           return response.end(method === 'HEAD' ? undefined : bytes)
         } catch (error) {
           if (error.code !== 'ENOENT') throw error
-          return json(404, { error: 'Movies data is unavailable.' })
+          if (moviesDirectory) return json(404, { error: 'Movies data is unavailable.' })
+        }
+        // The development server can use the same catalogue as the hosted app.
+        const published = new URL(movieFile, 'https://youroi.github.io/screen-room/movies-data/')
+        const revision = url.searchParams.get('v')
+        if (/^\d{8}T\d{6}Z$/.test(revision ?? '')) published.searchParams.set('v', revision)
+        try {
+          const upstream = await fetch(published, {
+            method, signal: AbortSignal.timeout(8000), redirect: 'error'
+          })
+          if (!upstream.ok) {
+            await upstream.body?.cancel()
+            return json(upstream.status === 404 ? 404 : 503, { error: 'Movies data is unavailable.' })
+          }
+          const bytes = method === 'HEAD' ? undefined : new Uint8Array(await upstream.arrayBuffer())
+          response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...contentHeaders })
+          return response.end(bytes)
+        } catch {
+          return json(503, { error: 'Movies data is unavailable.' })
         }
       }
 
